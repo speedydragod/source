@@ -17,7 +17,7 @@ import javax.crypto.NoSuchPaddingException;
 /**
  * 双向加密
  * 非对称加密   UnsymmetricEncrypt
- * @author kai.long001
+ * @author kai.long
  *default RSA Elgamal 背包算法 Rabin  D-H ECC（椭圆曲线加密算法）
  */
 public class RSAEncrypt {
