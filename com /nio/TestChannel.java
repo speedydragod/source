@@ -72,7 +72,7 @@ public class TestChannel {
 		CharsetDecoder cd = cs1.newDecoder();
 		
 		CharBuffer cBuf = CharBuffer.allocate(1024);
-		cBuf.put("尚硅谷威武！");
+		cBuf.put("this is a GBK charset");
 		cBuf.flip();
 		
 		//编码
