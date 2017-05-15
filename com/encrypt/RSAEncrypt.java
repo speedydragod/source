@@ -1,4 +1,4 @@
-package com.test.encrypt;
+package com.encrypt;
 
 import java.security.InvalidKeyException;
 import java.security.KeyPair;
