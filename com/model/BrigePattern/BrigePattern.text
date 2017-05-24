@@ -18,4 +18,5 @@
           3、一个类存在两个独立变化的维度，且这两个维度都需要进行扩展。
 注意事项：对于两个独立变化的维度，使用桥接模式再适合不过了。
 实现
-我们有一个作为桥接实现的 DrawAPI 接口和实现了 DrawAPI 接口的实体类 RedCircle、GreenCircle。Shape 是一个抽象类，将使用 DrawAPI 的对象。BridgePatternDemo，我们的演示类使用 Shape 类来画出不同颜色的圆。
+我们有一个作为桥接实现的 DrawAPI 接口和实现了 DrawAPI 接口的实体类 RedCircle、GreenCircle。Shape 是一个抽象类，将使用 DrawAPI 的对象。
+BridgePatternDemo，我们的演示类使用 Shape 类来画出不同颜色的圆。
