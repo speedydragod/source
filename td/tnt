@@ -1,0 +1,1538 @@
+/*** T_APPLY_AGENT_RELATION_TMP start ***/
+create or replace trigger tri_bi_T_APPLY_AGENT_REL_TMP
+  before insert ON T_APPLY_AGENT_RELATION_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bi_T_APPLY_AGENT_REL_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_AGENT_RELATION_TMP';
+  v_col_name     varchar2(30) := 'PK_SERIAL';
+  v_owner_name   varchar2(30) := 'TSSDATA';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息  **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.created_user := v_trigger_user;
+    :new.created_date := v_trigger_date;
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**   出错处理  **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bi_T_APPLY_AGENT_REL_TMP;
+/
+/*** T_APPLY_APPRIZE_TMP start ***/
+create or replace trigger tri_bi_T_APPLY_APPRIZE_TMP
+  before insert ON T_APPLY_APPRIZE_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bi_T_APPLY_APPRIZE_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_APPRIZE_TMP';
+  v_col_name     varchar2(30) := 'PK_SERIAL';
+  v_owner_name   varchar2(30) := 'TSSDATA';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息  **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.created_user := v_trigger_user;
+    :new.created_date := v_trigger_date;
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**   出错处理  **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bi_T_APPLY_APPRIZE_TMP;
+/
+/*** T_APPLY_BENEFICIARY_TMP start ***/
+create or replace trigger tri_bi_T_APPLY_BENEFICIARY_TMP
+  before insert ON T_APPLY_BENEFICIARY_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bi_T_APPLY_BENEFICIARY_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_BENEFICIARY_TMP';
+  v_col_name     varchar2(30) := 'PK_SERIAL';
+  v_owner_name   varchar2(30) := 'TSSDATA';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息  **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.created_user := v_trigger_user;
+    :new.created_date := v_trigger_date;
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**   出错处理  **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bi_T_APPLY_BENEFICIARY_TMP;
+/
+
+/*** T_APPLY_PRINT_INFO start ***/
+create or replace trigger tri_bi_T_APPLY_PRINT_INFO
+  before insert ON T_APPLY_PRINT_INFO
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bi_T_APPLY_PRINT_INFO';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_PRINT_INFO';
+  v_col_name     varchar2(30) := 'PK_SERIAL';
+  v_owner_name   varchar2(30) := 'TSSDATA';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  :new.PK_SERIAL := TSSDATA.SEQ_T_APPLY_PRINT_INFO_pk.nextval;  **/
+  
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息  **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.created_user := v_trigger_user;
+    :new.created_date := v_trigger_date;
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**   出错处理  **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bi_T_APPLY_PRINT_INFO;
+/
+
+/*** T_APPLY_PRODUCT_TMP start ***/
+create or replace trigger tri_bi_T_APPLY_PRODUCT_TMP
+  before insert ON T_APPLY_PRODUCT_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bi_T_APPLY_PRODUCT_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_PRODUCT_TMP';
+  v_col_name     varchar2(30) := 'PK_SERIAL';
+  v_owner_name   varchar2(30) := 'TSSDATA';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息  **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.created_user := v_trigger_user;
+    :new.created_date := v_trigger_date;
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**   出错处理  **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bi_T_APPLY_PRODUCT_TMP;
+/
+
+/*** T_APPLY_TMP start ***/
+create or replace trigger tri_bi_T_APPLY_TMP
+  before insert ON T_APPLY_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bi_T_APPLY_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_TMP';
+  v_col_name     varchar2(30) := 'PK_SERIAL';
+  v_owner_name   varchar2(30) := 'TSSDATA';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息  **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.created_user := v_trigger_user;
+    :new.created_date := v_trigger_date;
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**   出错处理  **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bi_T_APPLY_TMP;
+/
+
+/*** T_CLIENT_TMP start ***/
+create or replace trigger tri_bi_T_CLIENT_TMP
+  before insert ON T_CLIENT_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bi_T_CLIENT_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_CLIENT_TMP';
+  v_col_name     varchar2(30) := 'PK_SERIAL';
+  v_owner_name   varchar2(30) := 'TSSDATA';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息  **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.created_user := v_trigger_user;
+    :new.created_date := v_trigger_date;
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**   出错处理  **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bi_T_CLIENT_TMP;
+/
+
+/*** T_EXPRESS_RESULT_INFO start ***/
+create or replace trigger tri_bi_T_EXPRESS_RESULT_INFO
+  before insert ON T_EXPRESS_RESULT_INFO
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bi_T_EXPRESS_RESULT_INFO';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_EXPRESS_RESULT_INFO';
+  v_col_name     varchar2(30) := 'PK_SERIAL';
+  v_owner_name   varchar2(30) := 'TSSDATA';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  :new.PK_SERIAL := TSSDATA.SEQ_T_EXPRESS_RESULT_INFO_pk.nextval;
+  
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息  **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.created_user := v_trigger_user;
+    :new.created_date := v_trigger_date;
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**   出错处理  **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bi_T_EXPRESS_RESULT_INFO;
+/
+
+/*** T_PREAUTH_CANCEL_DETAIL start ***/
+create or replace trigger tri_bi_T_PREAUTH_CANCEL_DETAIL
+  before insert ON T_PREAUTH_CANCEL_DETAIL
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bi_T_PREAUTH_CANCEL_DETAIL';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_PREAUTH_CANCEL_DETAIL';
+  v_col_name     varchar2(30) := 'PK_SERIAL';
+  v_owner_name   varchar2(30) := 'TSSDATA';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  :new.PK_SERIAL := LPAD(TSSDATA.SEQ_T_PREAUTH_CANCEL_DETAIL.nextval, 20, '0');  **/
+  
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息  **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.created_user := v_trigger_user;
+    :new.created_date := v_trigger_date;
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**   出错处理  **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bi_T_PREAUTH_CANCEL_DETAIL;
+/
+
+/*** T_PREAUTH_CANCEL_FILE start ***/
+create or replace trigger tri_bi_T_PREAUTH_CANCEL_FILE
+  before insert ON T_PREAUTH_CANCEL_FILE
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bi_T_PREAUTH_CANCEL_FILE';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_PREAUTH_CANCEL_FILE';
+  v_col_name     varchar2(30) := 'PK_SERIAL';
+  v_owner_name   varchar2(30) := 'TSSDATA';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  :new.PK_SERIAL := TSSDATA.SEQ_T_PREAUTH_CANCEL_FILE_pk.nextval;  **/
+  
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息  **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.created_user := v_trigger_user;
+    :new.created_date := v_trigger_date;
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**   出错处理  **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bi_T_PREAUTH_CANCEL_FILE;
+/
+
+/*** T_UPLOAD_FILE_INFO start ***/
+create or replace trigger tri_bi_T_UPLOAD_FILE_INFO
+  before insert ON T_UPLOAD_FILE_INFO
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bi_T_UPLOAD_FILE_INFO';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_UPLOAD_FILE_INFO';
+  v_col_name     varchar2(30) := 'PK_SERIAL';
+  v_owner_name   varchar2(30) := 'TSSDATA';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  :new.PK_SERIAL := TSSDATA.SEQ_T_UPLOAD_FILE_INFO_pk.nextval;
+  
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息  **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.created_user := v_trigger_user;
+    :new.created_date := v_trigger_date;
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**   出错处理  **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bi_T_UPLOAD_FILE_INFO;
+/
+
+
+create or replace trigger tri_bu_T_APPLY_AGENT_REL_TMP
+  before update ON T_APPLY_AGENT_RELATION_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_APPLY_AGENT_REL_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_AGENT_RELATION_TMP';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_APPLY_AGENT_REL_TMP;
+
+/*** T_APPLY_AGENT_RELATION_TMP end ***/
+/
+create or replace trigger tri_bu_T_APPLY_APPRIZE_TMP
+  before update ON T_APPLY_APPRIZE_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_APPLY_APPRIZE_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_APPRIZE_TMP';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_APPLY_APPRIZE_TMP;
+
+/*** T_APPLY_APPRIZE_TMP end ***/
+/
+
+create or replace trigger tri_bu_T_APPLY_BENEFICIARY_TMP
+  before update ON T_APPLY_BENEFICIARY_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_APPLY_BENEFICIARY_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_BENEFICIARY_TMP';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_APPLY_BENEFICIARY_TMP;
+
+/*** T_APPLY_BENEFICIARY_TMP end ***/
+/
+
+create or replace trigger tri_bu_T_APPLY_PRINT_INFO
+  before update ON T_APPLY_PRINT_INFO
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_APPLY_PRINT_INFO';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_PRINT_INFO';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_APPLY_PRINT_INFO;
+
+/*** T_APPLY_PRINT_INFO end ***/
+/
+
+create or replace trigger tri_bu_T_APPLY_PRODUCT_TMP
+  before update ON T_APPLY_PRODUCT_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_APPLY_PRODUCT_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_PRODUCT_TMP';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_APPLY_PRODUCT_TMP;
+
+/*** T_APPLY_PRODUCT_TMP end ***/
+/
+
+create or replace trigger tri_bu_T_APPLY_TMP
+  before update ON T_APPLY_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_APPLY_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_APPLY_TMP';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_APPLY_TMP;
+
+/*** T_APPLY_TMP end ***/
+/
+
+create or replace trigger tri_bu_T_CLIENT_TMP
+  before update ON T_CLIENT_TMP
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_CLIENT_TMP';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_CLIENT_TMP';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_CLIENT_TMP;
+
+/*** T_CLIENT_TMP end ***/
+/
+
+create or replace trigger tri_bu_T_EXPRESS_RESULT_INFO
+  before update ON T_EXPRESS_RESULT_INFO
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_EXPRESS_RESULT_INFO';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_EXPRESS_RESULT_INFO';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_EXPRESS_RESULT_INFO;
+
+/*** T_EXPRESS_RESULT_INFO end ***/
+/
+
+create or replace trigger tri_bu_T_PREAUTH_CANCEL_DETAIL
+  before update ON T_PREAUTH_CANCEL_DETAIL
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_PREAUTH_CANCEL_DETAIL';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_PREAUTH_CANCEL_DETAIL';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_PREAUTH_CANCEL_DETAIL;
+
+/*** T_PREAUTH_CANCEL_DETAIL end ***/
+
+/
+
+create or replace trigger tri_bu_T_PREAUTH_CANCEL_FILE
+  before update ON T_PREAUTH_CANCEL_FILE
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_PREAUTH_CANCEL_FILE';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_PREAUTH_CANCEL_FILE';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_PREAUTH_CANCEL_FILE;
+
+/*** T_PREAUTH_CANCEL_FILE end ***/
+/
+
+/*** T_UPLOAD_DETAIL_INFO start ***/
+
+create or replace trigger tri_bu_T_UPLOAD_DETAIL_INFO
+  before update ON T_UPLOAD_DETAIL_INFO
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_UPLOAD_DETAIL_INFO';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_UPLOAD_DETAIL_INFO';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_UPLOAD_DETAIL_INFO;
+
+/*** T_UPLOAD_DETAIL_INFO end ***/
+/
+
+create or replace trigger tri_bu_T_UPLOAD_FILE_INFO
+  before update ON T_UPLOAD_FILE_INFO
+  referencing new as new old as old
+  for each row
+declare
+  v_trigger_user varchar2(50);
+  v_trigger_date date;
+  v_trigger_name varchar2(30) := 'tri_bu_T_UPLOAD_FILE_INFO';
+  v_switch_for   varchar2(30) := 'TSS_SYNCH';
+  v_table_name   varchar2(30) := 'T_UPLOAD_FILE_INFO';
+
+  cursor c_switch(cp_switch tss_tr_switch.switch_for%type) is
+    select status
+      from tss_tr_switch
+     where trigger_name = upper(v_trigger_name)
+       and switch_for = v_switch_for;
+  v_status        tss_tr_switch.status%type;
+  v_sqlcode       varchar2(6);
+  v_sqlerrm       varchar2(200);
+  v_error_comment varchar2(300);
+  v_flag          varchar2(1);
+  v_message       varchar2(400);
+begin
+  v_error_comment := 'before get_user';
+  v_trigger_user  := pub_sys_package.get_user();
+  v_trigger_date  := sysdate;
+
+  /**  需求来源：SLIS数据同步   **/
+  /**  功能描述：逻辑控制内容，用于保证数据完整性   **/
+  v_error_comment := 'before TSS_SYNCH';
+  open c_switch(v_switch_for); /**  获取子功能控制信息   **/
+  fetch c_switch
+    into v_status;
+  if c_switch%FOUND and v_status = '1' then
+    :new.updated_user := v_trigger_user;
+    :new.updated_date := v_trigger_date;
+  end if;
+  close c_switch;
+
+  /**  出错处理   **/
+exception
+  when others then
+    v_sqlcode := sqlcode;
+    v_sqlerrm := substr(sqlerrm, 1, 200);
+    insert into tss_tr_error_log
+      (error_no, /**  系统错误代码   **/
+       error_message, /**  系统错误信息   **/
+       trigger_name, /**  出错的trigger   **/
+       trigger_user, /**  出错的用户   **/
+       trigger_date, /**  出错的时间   **/
+       error_comment /**  出错详细信息   **/
+       )
+    values
+      (v_sqlcode,
+       v_sqlerrm,
+       upper(v_trigger_name),
+       v_trigger_user,
+       v_trigger_date,
+       v_error_comment);
+
+end tri_bu_T_UPLOAD_FILE_INFO;
+
+/*** T_UPLOAD_FILE_INFO end ***/
+/
