@@ -1,4 +1,4 @@
-#--!
+<head>--!</head>
 <dependencies>
 	<dependency>
 			<groupId>dom4j</groupId>
@@ -17,4 +17,4 @@
 		</dependency>
 	</dependencies>
   
-  pom.xml dependencies
+<h3>  pom.xml dependencies</h3>
