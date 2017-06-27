@@ -1,0 +1,2768 @@
+CREATE OR REPLACE PACKAGE BODY mcccde.mcc_callback_batch IS
+
+   --***********************************************************
+   --契撤重投件导入规则：
+   --1.如果是契撤重投的保单，则判断生效日，如果生效日是在60天以前（生效日<(sysdate-60)）的保单，则新单不用导入回访；
+   --2.生效日为60天以内的契撤重投保单：
+   --A：如果对应老单还未导入CMP，则直接导入新单，老单无需导入回访；
+   --B：如果对应老单已导入CMP：
+   --a：老单为刚导入CMP中，状态为“刚导入，还未分配”且还未到分配池时，直接把老保单置为“免回访”，新单导入回访；
+   --b：老单为刚导入CMP中，状态为“刚导入，还未分配”且已经到分配池，但是还未分配给坐席时，同上（老单置为“免回访”，新单导入回访）；
+   --c：老单已经分配给坐席，但状态为“待回访中”，系统自动把老单置为“免回访”，新单导入回访；
+   --d：老单已经开始回访，对于老单不做任何处理，新单导入回访。
+   --    DMP-7386MCC系统电销渠道新契约保单抽单规则调整需求  修改电商渠道抽单规则：
+   --1) 进入新核心系统时已签收回执，则次日导入；
+   --2) 若进入核心未签收回执，则保单打印日+30日以内回销回执的，以回执回销日次日为抽取条件；
+   --3) 若进入核心未签收回执，则保单打印日+30日以外回销回执的，以回执回销日+31日抽取。
+
+   --***********************************************************
+   --功能说明：
+   --    回访数据导入批次之入口
+   --参数说明：
+   --    输入参数
+   --        p_date ：导数时间
+   --    输出参数：
+   --        p_flag    ：返回标志 Y-成功，N-失败
+   --        p_message ：返回信息
+   --修改记录：create by kui.wang@sino-life.com 2013.07
+   --************************************************************
+   PROCEDURE batch_callback_import(p_proc_code IN slis_batch_proc_code_tbl.proc_code%TYPE,
+                                   p_sequence  IN slis_batch_proc_record.sequence%TYPE,
+                                   p_date      IN DATE,
+                                   p_flag      OUT VARCHAR2,
+                                   p_message   OUT VARCHAR2) IS
+      v_date     DATE;
+      v_prem_sum policy_product_prem.ann_standard_prem%TYPE;
+
+      --个险新契约取数
+      CURSOR c_uw_policy(v_date_tmp DATE) IS
+         SELECT p.policy_no,
+                p.applicant_no,
+                p.apply_no,
+                p.branch_code,
+                p.channel_type
+           FROM policy          p,
+                policy_contract c
+          WHERE (p.channel_type IN ('01', '03', '06', '07') --个险、经代、电销
+                --DMP-11908增加收展渠道
+                -- DMP-7386 增加电销渠道
+                OR (p.channel_type IN ('02', '04', '05') --DMP-11200
+                AND (p.business_source <> '3' OR p.department_no LIKE '05%'))) --排除银保通（但不排除交行银保通）
+            AND p.policy_no = c.policy_no
+            AND (c.confirm_date IS NOT NULL AND c.confirm_date >= trunc(v_date_tmp) - 5 OR
+                c.confirm_date IS NULL AND c.provide_date < trunc(v_date_tmp) - 30 AND
+                c.provide_date >= trunc(v_date_tmp) - 31)
+            AND NOT EXISTS (SELECT policy_no
+                   FROM mcc_callback_task mct
+                  WHERE policy_no = p.policy_no
+                    AND activity_type(p_activity => mct.activity_id) = 1)
+            AND NOT EXISTS (SELECT 'X'
+                   FROM mcc_uw_callback_policy mu
+                  WHERE mu.policy_no = p.policy_no
+                    AND mu.uw_result = '7')
+         UNION
+         SELECT p.policy_no,
+                p.applicant_no,
+                p.apply_no,
+                p.branch_code,
+                p.channel_type
+           FROM policy          p,
+                policy_contract c
+          WHERE p.policy_no = c.policy_no
+               /*AND p.channel_type IN ('02', '04', '05')*/ --DMP-11200 银保通
+            AND p.channel_type IN ('04', '05') --DMP-14151修改银保通保单导入规则
+            AND p.business_source = '3'
+            AND p.department_no NOT LIKE '05%' --银保通(非交行)
+            AND c.provide_date >= trunc(v_date_tmp) - 10
+            AND NOT EXISTS (SELECT policy_no
+                   FROM mcc_callback_task mct
+                  WHERE policy_no = p.policy_no
+                    AND activity_type(p_activity => mct.activity_id) = 1)
+            AND NOT EXISTS (SELECT 'X'
+                   FROM mcc_uw_callback_policy mu
+                  WHERE mu.policy_no = p.policy_no
+                    AND mu.uw_result = '7')
+         UNION
+         SELECT p.policy_no,
+                p.applicant_no,
+                p.apply_no,
+                p.branch_code,
+                p.channel_type
+           FROM policy          p,
+                policy_contract c
+          WHERE p.policy_no = c.policy_no
+            AND p.channel_type IN ('08', '09') --网销
+               --DMP-16621增加创新拓展渠道
+            AND c.provide_date >= trunc(v_date_tmp) - 20
+            AND NOT EXISTS (SELECT policy_no
+                   FROM mcc_callback_task mct
+                  WHERE policy_no = p.policy_no
+                    AND activity_type(p_activity => mct.activity_id) = 1)
+            AND NOT EXISTS (SELECT 'X'
+                   FROM mcc_uw_callback_policy mu
+                  WHERE mu.policy_no = p.policy_no
+                    AND mu.uw_result = '7')
+         UNION
+         SELECT p.policy_no,
+                p.applicant_no,
+                p.apply_no,
+                p.branch_code,
+                p.channel_type
+           FROM policy          p,
+                policy_contract pc
+          WHERE p.channel_type = '06' -- 电销
+            AND p.created_date >= trunc(v_date_tmp) - 5
+            AND p.created_date < v_date_tmp
+               --DMP-7386 增加判断是否已经签收回执
+            AND pc.policy_no = p.policy_no
+            AND pc.confirm_date IS NOT NULL
+            AND NOT EXISTS (SELECT policy_no
+                   FROM mcc_callback_task mct
+                  WHERE policy_no = p.policy_no
+                    AND activity_type(p_activity => mct.activity_id) = 1)
+            AND NOT EXISTS (SELECT 'X'
+                   FROM mcc_uw_callback_policy mu
+                  WHERE mu.policy_no = p.policy_no
+                    AND mu.uw_result = '7')
+         UNION
+         SELECT p.policy_no,
+                p.applicant_no,
+                p.apply_no,
+                p.branch_code,
+                p.channel_type
+           FROM policy p
+          WHERE p.channel_type = '02' -- DMP-14151修改银保通保单导入规则
+            AND p.business_source = '3'
+            AND p.department_no NOT LIKE '05%' --银保通(非交行)
+            AND p.created_date >= trunc(v_date_tmp) - 5
+            AND p.created_date < v_date_tmp
+            AND NOT EXISTS (SELECT policy_no
+                   FROM mcc_callback_task mct
+                  WHERE policy_no = p.policy_no
+                    AND activity_type(p_activity => mct.activity_id) = 1)
+            AND NOT EXISTS (SELECT 'X'
+                   FROM mcc_uw_callback_policy mu
+                  WHERE mu.policy_no = p.policy_no
+                    AND mu.uw_result = '7');
+      /*不再从TSS取数
+      union
+      select a.policy_no,
+             c.custom_id applicant_no,
+             a.apply_no,
+             a.branch_code,
+             '06' channel_type
+        from t_apply_info a, t_client c
+       where a.state not in ('0', '2', '7', '8')
+         and a.client_no = c.client_no
+         and not exists
+       (select 1 from policy where policy_no = a.policy_no) --已在slis的就从slis取
+         and (a.sign_date is not null and a.sign_date >= trunc(v_date_tmp) - 1 and
+             a.apply_date >= trunc(v_date_tmp) - 30 or
+             a.sign_date is null and a.apply_date < trunc(v_date_tmp) - 30 and
+             a.apply_date >= trunc(v_date_tmp) - 31);*/
+      --其他类型回访数据
+      CURSOR c_callback_task IS
+         SELECT *
+           FROM callback_task ct
+          WHERE ct.created_date > p_date - 1
+            AND ct.valid_flag = 'Y'
+            AND NOT EXISTS (SELECT 'X'
+                   FROM mcc_callback_task mct
+                  WHERE mct.activity_id = ct.activity_id_type
+                    AND mct.client_no = ct.client_no
+                    AND mct.business_no = ct.business_no);
+      --补处理线上保单mcc_uw_callback_policy 记录
+      CURSOR c_web_callback_policy IS
+         SELECT policy_no,
+                extract_date,
+                activity_id,
+                web_file_id
+           FROM mcc_callback_task mct
+          WHERE mct.extract_date > p_date - 50
+            AND mct.activity_id IN ('1000000007', '1000000016', '1000000017', '1000000018')
+            AND NOT EXISTS (SELECT 1
+                   FROM mcc_uw_callback_policy mucp
+                  WHERE mucp.policy_no = mct.policy_no)
+            AND EXISTS (SELECT 1
+                   FROM policy
+                  WHERE policy_no = mct.policy_no);
+
+      v_count   NUMBER := 0;
+      v_flag    VARCHAR2(1);
+      v_message VARCHAR2(4000);
+      --异常处理
+      v_program_id VARCHAR2(50) := 'batch_callback_import';
+      v_comments   VARCHAR2(4000);
+      v_error_code VARCHAR2(4000);
+
+      v_task_id      mcc_callback_task.task_id%TYPE;
+      v_product_code policy_product.product_code%TYPE;
+      v_provide_date DATE;
+      v_count1       NUMBER;
+      v_count2       NUMBER;
+      v_confirm_date policy_contract.confirm_date%TYPE;
+      v_channel_type policy.channel_type%TYPE;
+   BEGIN
+      SAVEPOINT proc_start;
+
+      v_date := p_date;
+      IF v_date IS NULL THEN
+         v_date := SYSDATE;
+      END IF;
+      --先处理线上回访保单缺失mcc_uw_callback_policy部分的数据
+      FOR v_web_callback_policy IN c_web_callback_policy
+      LOOP
+         /*IF web_callback_activity_id_check(p_policy_no       => v_web_callback_policy.policy_no,
+                                           p_activity_id     => v_web_callback_policy.activity_id,
+                                           p_branch_code     => '',
+                                           p_channel_type    => '',
+                                           p_business_source => '',
+                                           p_product_code    => '') = 'Y' THEN*/
+            per_uw_callback_import(p_policy_no => v_web_callback_policy.policy_no,
+                                   p_flag      => v_flag,
+                                   p_message   => v_message);
+            IF v_flag = 'N' THEN
+               slis_batch_proc_trace_package.slis_batch_proc_error_trace(p_sequence,
+                                                                         p_proc_code,
+                                                                         v_web_callback_policy.policy_no,
+                                                                         '2',
+                                                                         '回访数据导错' || v_message,
+                                                                         USER,
+                                                                         SYSDATE,
+                                                                         v_flag,
+                                                                         v_message);
+            ELSE
+               UPDATE mcc_uw_callback_policy p
+                  SET p.uw_result        = decode(v_web_callback_policy.activity_id,
+                                                  '100000004',
+                                                  '',
+                                                  '100000007',
+                                                  '7',
+                                                  '9'),
+                      p.task_finish_date = v_web_callback_policy.extract_date,
+                      p.real_finish_date = v_web_callback_policy.extract_date,
+                      p.web_file_id      = v_web_callback_policy.web_file_id
+                WHERE policy_no = v_web_callback_policy.policy_no;
+            END IF;
+         /*ELSE
+            UPDATE mcc_callback_task
+               SET activity_id = '1000000004'
+             WHERE policy_no = v_web_callback_policy.policy_no
+               AND activity_id = '1000000007';*/
+        -- END IF;
+      END LOOP;
+      COMMIT;
+      FOR v_policy IN c_uw_policy(v_date)
+      LOOP
+         --DMP-4173 MCC系统电商渠道新契约保单抽单规则调整
+         -- 1)  若新契约保单在“保单生效日起3日内”完成了网上回访，则新契约保单不导入MCC系统回访；
+         --2)  若新契约保单在“保单生效日起3日内”未完成网上回访，则新契约保单在“保单生效第4日”导入MCC系统回访；
+         --3)  此需求仅适用于MCC系统电商渠道“E理财”、“聚利宝”新契约保单抽单规则，其他渠道及电商其他产品抽单规则保持不变；
+         --DMP-10339取消销售渠道限制
+         /*  IF v_policy.channel_type = '08' THEN
+         */
+         SELECT MAX(pp.product_code),
+                MIN(pc.provide_date),
+                MAX(pc.confirm_date),
+                MAX(p.channel_type)
+           INTO v_product_code,
+                v_provide_date,
+                v_confirm_date,
+                v_channel_type
+           FROM policy_product  pp,
+                policy_contract pc,
+                policy          p
+          WHERE pp.policy_no = pc.policy_no
+            AND pp.policy_no = p.policy_no
+            AND pp.policy_no = v_policy.policy_no
+            AND pp.is_primary_plan = 'Y';
+         v_count1 := '0';
+
+         /*IF get_web_callback_id_by_policy(p_policy_no => v_policy.policy_no) = '1000000004' THEN
+            UPDATE mcc_callback_task
+               SET activity_id = '1000000004'
+             WHERE policy_no = v_policy.policy_no
+               AND activity_id = '1000000007';
+         END IF;
+
+         IF \*v_product_code IN ('UNED_AN1', 'UNAN_CN1', 'UNAN_AN1')*\
+         --DMP-4539  系统成长红包回访抽单规则调整
+          get_web_callback_id_by_policy(p_policy_no => v_policy.policy_no) = '1000000007' THEN
+            SELECT COUNT(1)
+              INTO v_count1
+              FROM mcc_callback_task mct
+             WHERE policy_no = v_policy.policy_no
+               AND activity_type(p_activity => mct.activity_id) = 1;
+            IF v_count1 > 0 THEN
+               SELECT COUNT(1)
+                 INTO v_count2
+                 FROM mcc_uw_callback_policy
+                WHERE policy_no = v_policy.policy_no;
+               IF v_count2 = '0' THEN
+                  per_uw_callback_import(v_policy.policy_no, p_flag, p_message);
+
+               END IF;
+               --需要修改回访状态为网上回访成功(限定“E理财”、“聚利宝”两个产品)
+               UPDATE mcc_uw_callback_policy p
+                  SET p.uw_result        = '7',
+                      p.task_finish_date = SYSDATE,
+                      p.real_finish_date = SYSDATE
+                WHERE policy_no = v_policy.policy_no
+                  AND uw_result IS NULL
+                  AND get_web_callback_id_by_policy(p_policy_no => v_policy.policy_no) =
+                      '1000000007';
+
+            ELS*/
+         --判断是否超出线上回访时效，如超出则导入回访
+         IF (v_date >
+            v_provide_date + get_policy_web_callback_period(p_policy_no => v_policy.policy_no) AND
+            v_channel_type IN ('02', '08', '09')) OR
+            ((v_date > nvl(v_confirm_date, SYSDATE) +
+            get_policy_web_callback_period(p_policy_no => v_policy.policy_no) OR
+            v_confirm_date IS NULL) AND v_channel_type NOT IN ('02', '08', '09')) THEN
+            --DMP-7545 招行投连项目回访抽单规则需求
+            --生命e启赢B款年金保险（投资连结型） UEAN_BN1 导入时直接为线上回访成功状态
+            SELECT ppp.ann_standard_prem
+              INTO v_prem_sum
+              FROM policy_product_prem ppp
+             WHERE ppp.policy_no = v_policy.policy_no
+               AND ppp.prod_seq = '1';
+            IF v_product_code = 'UEAN_BN1' THEN
+               mcc_callback_batch.web_callback_policy(p_policy_no => v_policy.policy_no,
+                                                      p_client_no => v_policy.applicant_no,
+                                                      p_apply_no  => v_policy.apply_no,
+                                                      p_flag      => p_flag,
+                                                      p_message   => p_message);
+               IF p_flag = 'N' THEN
+                  slis_batch_proc_trace_package.slis_batch_proc_error_trace(p_sequence,
+                                                                            p_proc_code,
+                                                                            v_policy.policy_no,
+                                                                            '2',
+                                                                            '回访数据导错' || p_message,
+                                                                            USER,
+                                                                            SYSDATE,
+                                                                            v_flag,
+                                                                            v_message);
+               ELSE
+                  v_count := v_count + 1;
+                  IF v_count > 5000 THEN
+                     COMMIT; --分段提交
+                     v_count := 0;
+                  END IF;
+               END IF;
+               -- DMP-20701 MCC系统成长红包抽单规则调整(20170615版本)
+               -- 电商渠道成长红包保单 CEAN_AN1 线上回访不成功的，将100%开展电话回访。
+               -- 故取消成长红包线上回访不成功，保费100元以下不再电话回访的规则
+            /*ELSIF v_product_code = 'CEAN_AN1' AND v_prem_sum < 100 THEN
+               mcc_callback_batch.web_callback_policy(p_policy_no => v_policy.policy_no,
+                                                      p_client_no => v_policy.applicant_no,
+                                                      p_apply_no  => v_policy.apply_no,
+                                                      p_flag      => p_flag,
+                                                      p_message   => p_message);
+               IF p_flag = 'N' THEN
+                  slis_batch_proc_trace_package.slis_batch_proc_error_trace(p_sequence,
+                                                                            p_proc_code,
+                                                                            v_policy.policy_no,
+                                                                            '2',
+                                                                            '回访数据导错' || p_message,
+                                                                            USER,
+                                                                            SYSDATE,
+                                                                            v_flag,
+                                                                            v_message);
+
+               ELSE
+                  UPDATE mcc_uw_callback_policy p
+                     SET p.uw_result = '8'
+                   WHERE policy_no = v_policy.policy_no;
+                  SELECT MAX(task_id)
+                    INTO v_task_id
+                    FROM mcc_callback_task
+                   WHERE policy_no = v_policy.policy_no;
+                  IF v_task_id IS NOT NULL THEN
+                     INSERT INTO mcc_callback_log
+                        (task_id,
+                         callback_log_no,
+                         call_result,
+                         call_id,
+                         tenant_code,
+                         deal_code,
+                         deal_time,
+                         remark)
+                     VALUES
+                        (v_task_id,
+                         '1',
+                         '1',
+                         'ordercallback',
+                         'default',
+                         USER,
+                         SYSDATE,
+                         '成长红包累计保费金额小于100元，免回访');
+                  END IF;
+                  v_count := v_count + 1;
+                  IF v_count > 5000 THEN
+                     COMMIT; --分段提交
+                     v_count := 0;
+                  END IF;
+               END IF;*/
+            ELSE
+               prepare_callback_import(v_policy.policy_no,
+                                       v_policy.branch_code,
+                                       v_policy.channel_type,
+                                       v_policy.applicant_no,
+                                       v_policy.apply_no,
+                                       v_task_id,
+                                       p_flag,
+                                       p_message);
+               IF p_flag = 'N' THEN
+                  slis_batch_proc_trace_package.slis_batch_proc_error_trace(p_sequence,
+                                                                            p_proc_code,
+                                                                            v_policy.policy_no,
+                                                                            '2',
+                                                                            '回访数据导错' || p_message,
+                                                                            USER,
+                                                                            SYSDATE,
+                                                                            v_flag,
+                                                                            v_message);
+               ELSE
+                  v_count := v_count + 1;
+                  IF v_count > 5000 THEN
+                     COMMIT; --分段提交
+                     v_count := 0;
+                  END IF;
+               END IF;
+            END IF;
+         END IF;
+         /*ELSE
+         prepare_callback_import(v_policy.policy_no,
+                                 v_policy.branch_code,
+                                 v_policy.channel_type,
+                                 v_policy.applicant_no,
+                                 v_policy.apply_no,
+                                 v_task_id,
+                                 p_flag,
+                                 p_message);
+         IF p_flag = 'N' THEN
+            slis_batch_proc_trace_package.slis_batch_proc_error_trace(p_sequence,
+                                                                      p_proc_code,
+                                                                      v_policy.policy_no,
+                                                                      '2',
+                                                                      '回访数据导错' || p_message,
+                                                                      USER,
+                                                                      SYSDATE,
+                                                                      v_flag,
+                                                                      v_message);
+         ELSE
+            v_count := v_count + 1;
+            IF v_count > 5000 THEN
+               COMMIT; --分段提交
+               v_count := 0;
+            END IF;
+         END IF;*/
+
+      --DMP-10339取消销售渠道限制
+      /*         ELSE
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  prepare_callback_import(v_policy.policy_no,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          v_policy.branch_code,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          v_policy.channel_type,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          v_policy.applicant_no,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          v_policy.apply_no,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          v_task_id,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          p_flag,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          p_message);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  IF p_flag = 'N' THEN
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     slis_batch_proc_trace_package.slis_batch_proc_error_trace(p_sequence,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               p_proc_code,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               v_policy.policy_no,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               '2',
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               '回访数据导错' || p_message,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               USER,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               SYSDATE,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               v_flag,
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               v_message);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  ELSE
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     v_count := v_count + 1;
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     IF v_count > 5000 THEN
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        COMMIT; --分段提交
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        v_count := 0;
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     END IF;
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  END IF;
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               END IF;*/
+      END LOOP;
+      --导入其他回访任务
+      FOR v_callback_task IN c_callback_task
+      LOOP
+         INSERT INTO mcc_callback_task
+            (task_id,
+             activity_id,
+             tenant_code,
+             extract_date,
+             policy_no,
+             business_no,
+             client_no,
+             task_type,
+             callback_status)
+         VALUES
+            (mcc_pub.fetch_seq(p_table_name  => 'MCC_CALLBACK_TASK',
+                               p_column_name => 'TASK_ID',
+                               p_table_owner => 'MCCDATA'),
+             v_callback_task.activity_id_type,
+             'default',
+             SYSDATE,
+             v_callback_task.policy_no,
+             v_callback_task.business_no,
+             v_callback_task.client_no,
+             '1',
+             '0');
+      END LOOP;
+      COMMIT;
+
+      p_flag := 'Y';
+   EXCEPTION
+      WHEN OTHERS THEN
+         ROLLBACK TO proc_start;
+         p_flag       := 'N';
+         v_error_code := v_error_code || substrb(SQLERRM, 1, 300);
+         v_comments   := p_date;
+         pub_error_handle.exception_no_raise(v_program_id, v_error_code, v_comments, p_message);
+   END batch_callback_import;
+
+   --***********************************************************
+   --功能说明：
+   --    回访数据导入批次之规则准备
+   --参数说明：
+   --    输入参数
+   --    输出参数：
+   --        p_flag    ：返回标志 Y-成功，N-失败
+   --        p_message ：返回信息
+   --修改记录：create by kui.wang@sino-life.com 2013.07
+   --************************************************************
+   PROCEDURE prepare_callback_import(p_policy_no    IN mcc_callback_task.policy_no%TYPE,
+                                     p_branch_code  IN mcc_callback_task.policy_no%TYPE,
+                                     p_channel_type IN mcc_callback_task.policy_no%TYPE,
+                                     p_client_no    IN mcc_callback_task.client_no%TYPE,
+                                     p_business_no  IN mcc_callback_task.business_no%TYPE,
+                                     p_task_id      OUT mcc_callback_task.task_id%TYPE,
+                                     p_flag         OUT VARCHAR2,
+                                     p_message      OUT VARCHAR2) IS
+      v_message   VARCHAR2(4000);
+      v_duty_flag VARCHAR2(1);
+
+   BEGIN
+      /**
+      select max('S')
+        into v_message
+        from policy_product
+       where is_primary_plan = 'Y'
+         and policy_no = p_policy_no
+         and product_code in ('CNAC_AN1',
+                              'CNAC_BN1',
+                              'CGDD_FN1',
+                              'CGAC_AN1',
+                              'CGAC_DN1',
+                              'CGAC_EN1',
+                              'CGAC_IN1',
+                              'CGDD_CN1',
+                              'CGDD_EN1',
+                              'CGME_YN1',
+                              'CGTM_AN1',
+                              'CIAC_KN1',
+                              'CIAC_MN1',
+                              'CIAC_AN1',
+                              'CBAC_AN1',
+                              'CITM_CN1',
+                              'CIAC_HN1',
+                              'CNTM_BN1',
+                              --'CIME_KN1',
+                              --'CIME_LN1',
+                              --'CIME_MN1',
+                              'CIAC_GN1',
+                              'CIAC_FN1',
+                              'CIAC_EN1',
+                              'CIAC_IN1',
+                              'CITM_BN1',
+                              'CIAC_NN1',
+                              'CIAC_UN1',
+                              'CIAC_TN1',
+                              'CIAC_PN1');--短险，目前没有判断短险的接口，先写死
+                              */
+      --短险
+      SELECT MAX('S')
+        INTO v_message
+        FROM policy_product p,
+             product_class  b
+       WHERE p.is_primary_plan = 'Y'
+         AND p.policy_no = p_policy_no
+         AND p.product_code = b.product_code
+         AND b.class_code = '4'
+         AND p.product_code NOT IN ('CIME_KN1', 'CIME_LN1', 'CIME_MN1');
+      --犹豫期撤销掉的
+      SELECT MAX('Y')
+        INTO v_duty_flag
+        FROM policy_product
+       WHERE policy_no = p_policy_no
+         AND is_primary_plan = 'Y'
+         AND duty_status = '2'
+         AND lapse_reason = '1';
+      --契撤重投的处理
+      --    DMP-4761MCC系统契撤重投保单抽单规则调整需求 ,取消契撤重投判断
+      /*SELECT MAX(p.policy_no),
+                MAX(p.effect_date)
+           INTO v_policy_no,
+                v_effect_date
+           FROM uw_apply_info                 a,
+                pos_nbu_rollback_reapply_info b,
+                policy                        p
+          WHERE b.old_policy_no = p_policy_no
+            AND a.apply_bar_code = b.new_apply_bar_code
+            AND a.policy_no = p.policy_no;
+      */
+      /*
+      if substr(p_branch_code,1,4) not in ('8648','8643','8642') or p_channel_type in ('06','08') then
+        null;--机构控制 试点上线：深圳8648 湖南8643 湖北8642 （但不包括电销/网销保单）
+        试点结束2013-12-01
+      els*/
+      IF v_message = 'S' THEN
+         p_message := '排除短险';
+
+      ELSIF v_duty_flag = 'Y' THEN
+         p_message := '已犹豫期撤销';
+         --    DMP-4761MCC系统契撤重投保单抽单规则调整需求 ,取消契撤重投判断
+         /*    ELSIF v_policy_no IS NOT NULL AND v_effect_date >= SYSDATE - 60 THEN
+         p_message := '契撤重投的老单，新单也符合导入条件';*/
+      ELSE
+         --    DMP-4761MCC系统契撤重投保单抽单规则调整需求 ,取消契撤重投判断
+         /* SELECT MAX(b.old_policy_no),
+                MAX(p.effect_date)
+           INTO v_policy_no,
+                v_effect_date
+           FROM uw_apply_info                 a,
+                pos_nbu_rollback_reapply_info b,
+                policy                        p
+          WHERE a.policy_no = p_policy_no
+            AND a.apply_bar_code = b.new_apply_bar_code
+            AND a.policy_no = p.policy_no;
+         --是契撤重投的新单
+         IF v_policy_no IS NOT NULL AND v_effect_date < SYSDATE - 60 THEN
+            p_message := '60天以前的,新单无需导入';
+         ELSE
+            IF v_policy_no IS NOT NULL THEN
+               SELECT MAX(task_id),
+                      MAX(callback_status)
+                 INTO v_task_id,
+                      v_status
+                 FROM mcc_callback_task
+                WHERE policy_no = v_policy_no
+                  AND activity_id = '1000000001'
+                  AND task_type = '1';
+               IF v_task_id IS NOT NULL AND v_status IN ('0', '1') THEN
+                  UPDATE mcc_callback_task
+                     SET callback_status = '3'
+                   WHERE task_id = v_task_id;
+                  UPDATE mcc_uw_callback_policy
+                     SET uw_result = '6'
+                   WHERE policy_no = v_policy_no;
+               END IF;
+            END IF;*/
+         per_callback_import_com(p_policy_no,
+                                 p_client_no,
+                                 '1000000001',
+                                 'default',
+                                 p_business_no,
+                                 '1',
+                                 p_task_id,
+                                 p_flag,
+                                 p_message);
+
+      END IF;
+   END prepare_callback_import;
+
+   --**************************************************************
+   --功能说明：
+   --    回访数据导入批次之逐单入口，公共表MCC_CALLBACK_TASK表部分
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --        p_activity_id ： 活动ID
+   --        p_client_no : 客户号
+   --    输出参数：
+   --        p_flag    ：返回标志 Y-成功，N-失败
+   --        p_message ：返回信息
+   --修改记录：create by kui.wang@sino-life.com 2013.07
+   --************************************************************
+   PROCEDURE per_callback_import_com(p_policy_no   IN mcc_callback_task.policy_no%TYPE,
+                                     p_client_no   IN mcc_callback_task.client_no%TYPE,
+                                     p_activity_id IN mcc_callback_task.activity_id%TYPE,
+                                     p_tenant_code IN mcc_callback_task.tenant_code%TYPE,
+                                     p_business_no IN mcc_callback_task.business_no%TYPE,
+                                     p_task_type   IN mcc_callback_task.task_type%TYPE,
+                                     p_task_id     OUT mcc_callback_task.task_id%TYPE,
+                                     p_flag        OUT VARCHAR2,
+                                     p_message     OUT VARCHAR2) IS
+      v_flag            VARCHAR2(2);
+      v_user            mcc_callback_task.deal_user%TYPE;
+      v_attention_grade mcc_callback_task.client_attention_grade%TYPE;
+      v_attention_desc  mcc_callback_task.client_attention_desc%TYPE;
+      v_message         VARCHAR2(4000);
+   BEGIN
+      SAVEPOINT proc_start;
+
+      SELECT MAX(task_id)
+        INTO p_task_id
+        FROM mcc_callback_task
+       WHERE policy_no = p_policy_no
+         AND activity_type(activity_id) = activity_type(p_activity_id)
+         AND task_type = p_task_type
+         AND callback_status <> '3';
+      IF p_task_id IS NOT NULL THEN
+         IF p_activity_id = '1000000001' THEN
+            p_flag    := 'N';
+            p_message := '相同的待处理记录已存在' || p_task_id;
+         ELSE
+            p_flag := 'Y';
+         END IF;
+         RETURN;
+      END IF;
+
+      mcc_pub.get_seq('mcc_callback_task', 'task_id', 'mccdata', p_task_id, p_flag, p_message);
+
+      p_flag := 'Y';
+      BEGIN
+         SAVEPOINT import_start;
+         INSERT INTO mcc_callback_task
+            (task_id,
+             activity_id,
+             tenant_code,
+             extract_date,
+             policy_no,
+             business_no,
+             client_no,
+             task_type,
+             callback_status)
+         VALUES
+            (p_task_id,
+             p_activity_id,
+             p_tenant_code,
+             SYSDATE,
+             p_policy_no,
+             p_business_no,
+             p_client_no,
+             p_task_type,
+             '0');
+
+         --电销渠道的保单可能还没有在policy存在
+         SELECT nvl(MAX('00'), '06')
+           INTO v_flag
+           FROM policy p
+          WHERE p.policy_no = p_policy_no;
+         IF p_activity_id IN ('1000000001', '1000000002') THEN
+            IF v_flag = '06' THEN
+               per_tss_callback_import(p_policy_no, p_flag, p_message);
+            ELSE
+               per_uw_callback_import(p_policy_no, p_flag, p_message);
+            END IF;
+            IF p_activity_id = '1000000001' THEN
+               IF p_task_type = '1' THEN
+                  SELECT MAX(a.deal_user)
+                    INTO v_user
+                    FROM mcc_callback_task a
+                   WHERE a.client_no = p_client_no
+                     AND a.task_type = p_task_type
+                     AND a.deal_user IS NOT NULL
+                     AND a.activity_id in ('1000000001','1000000002')
+                     AND a.task_id <> p_task_id
+                     AND a.distribute_date > SYSDATE - 30
+                     AND EXISTS (SELECT 'X'
+                            FROM mcc_user m
+                           WHERE m.agent_status = 'Y'
+                             AND m.user_code = a.deal_user);
+               ELSIF p_task_type = '2' THEN
+                  SELECT MAX(a.deal_user)
+                    INTO v_user
+                    FROM mcc_callback_task a
+                   WHERE a.policy_no = p_policy_no
+                     AND a.task_type = p_task_type
+                     AND a.deal_user IS NOT NULL
+                     AND a.task_id <> p_task_id
+                     AND a.activity_id = p_activity_id
+                     AND EXISTS (SELECT 'X'
+                            FROM mcc_user m
+                           WHERE m.agent_status = 'Y'
+                             AND m.user_code = a.deal_user);
+               END IF;
+            END IF;
+            IF p_activity_id = '1000000002' THEN
+               v_user := pub_sys_package.get_user;
+            END IF;
+            IF v_user IS NOT NULL THEN
+               UPDATE mcc_callback_task a
+                  SET a.distribute_date = SYSDATE,
+                      a.deal_user       = v_user,
+                      a.callback_status = decode(p_activity_id, '1000000002', '2', '1')
+                WHERE a.task_id = p_task_id;
+            END IF;
+            --更新关注客户信息
+            attention_uw_task(p_policy_no       => p_policy_no,
+                              p_attention_grade => v_attention_grade,
+                              p_attention_desc  => v_attention_desc,
+                              p_flag            => v_flag,
+                              p_message         => v_message);
+            IF v_flag = 'Y' AND v_attention_grade IS NOT NULL THEN
+               UPDATE mcc_callback_task mct
+                  SET mct.client_attention_grade = v_attention_grade,
+                      mct.client_attention_desc  = v_attention_desc
+                WHERE task_id = p_task_id;
+            END IF;
+         END IF;
+
+      EXCEPTION
+         WHEN OTHERS THEN
+            ROLLBACK TO import_start;
+            p_flag    := 'N';
+            p_message := substr(SQLERRM, 1, 150);
+      END;
+
+   EXCEPTION
+      WHEN OTHERS THEN
+         ROLLBACK TO proc_start;
+         p_flag    := 'N';
+         p_message := substr(SQLERRM, 1, 150);
+   END per_callback_import_com;
+
+   --**************************************************************
+   --功能说明：
+   --    回访数据导入批次之逐单入口，新契约回访SLIS数据MCC_UW_CALLBACK_POLICY表部分
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --    输出参数：
+   --        p_flag    ：返回标志 Y-成功，N-失败
+   --        p_message ：返回信息
+   --修改记录：create by kui.wang@sino-life.com 2013.07
+   --************************************************************
+   PROCEDURE per_uw_callback_import(p_policy_no IN mcc_callback_task.policy_no%TYPE,
+                                    p_flag      OUT VARCHAR2,
+                                    p_message   OUT VARCHAR2) IS
+      v_abnormal_flag mcc_uw_callback_policy.is_abnormal%TYPE;
+      v_abnormal_info mcc_uw_callback_policy.abnormal_reason%TYPE;
+      v_abnormal_desc mcc_uw_callback_policy.abnormal_reason_desc%TYPE;
+      v_count         NUMBER;
+      v_is_vip        mcc_uw_callback_policy.is_vip%TYPE;
+   BEGIN
+
+      p_flag := 'N';
+      SAVEPOINT uw_import_start;
+      SELECT decode(COUNT(1), '0', 'N', 'Y')
+        INTO v_is_vip
+        FROM pos_vip_client pvc,
+             policy         p,
+             pos_vip_grade  pvg
+       WHERE p.policy_no = p_policy_no
+         AND p.applicant_no = pvc.client_no
+         AND nvl(pvc.vip_end_date, SYSDATE) >= SYSDATE
+         AND pvc.vip_grade = pvg.vip_grade;
+      abnormal_uw_policy(p_policy_no,
+                         v_abnormal_flag,
+                         v_abnormal_info,
+                         v_abnormal_desc,
+                         p_flag,
+                         p_message);
+      SELECT COUNT(1)
+        INTO v_count
+        FROM mcc_uw_callback_policy p,
+             mcc_callback_task      c
+       WHERE c.policy_no = p.policy_no
+         AND c.activity_id = '1000000004'
+         AND p.policy_no = p_policy_no;
+      --网上回访可能先插入保单数据了，但是不是最新的
+      IF v_count > 0 THEN
+         UPDATE mcc_uw_callback_policy
+            SET (branch_code,
+                 app_name,
+                 app_sex,
+                 app_age,
+                 product_code,
+                 prem_sum,
+                 provide_date,
+                 client_sign_date,
+                 input_date,
+                 channel_type,
+                 department_no,
+                 is_abnormal,
+                 abnormal_reason,
+                 abnormal_reason_desc,
+                 relationship,
+                 is_vip) =
+                (SELECT p.branch_code,
+                        c.client_name,
+                        c.sex_code,
+                        floor(months_between(p.apply_date, c.birthday) / 12),
+                        d.product_code,
+                        (SELECT SUM(m.period_standard_prem)
+                           FROM policy_product_prem m
+                          WHERE p.policy_no = m.policy_no
+                            AND d.prod_seq = m.prod_seq),
+                        nvl(t.provide_date, p.issue_date),
+                        t.client_sign_date,
+                        t.confirm_date,
+                        p.channel_type,
+                        p.department_no,
+                        v_abnormal_flag,
+                        v_abnormal_info,
+                        v_abnormal_desc,
+                        d.relationship,
+                        v_is_vip
+                   FROM policy             p,
+                        client_information c,
+                        policy_product     d,
+                        policy_contract    t
+                  WHERE p.policy_no = p_policy_no
+                    AND p.applicant_no = c.client_no
+                    AND p.policy_no = d.policy_no
+                    AND d.is_primary_plan = 'Y'
+                    AND p.policy_no = t.policy_no(+))
+          WHERE policy_no = p_policy_no;
+      ELSE
+         INSERT INTO mcc_uw_callback_policy
+            (policy_no,
+             branch_code,
+             app_name,
+             app_sex,
+             app_age,
+             product_code,
+             prem_sum,
+             provide_date,
+             client_sign_date,
+             input_date,
+             channel_type,
+             department_no,
+             is_abnormal,
+             abnormal_reason,
+             abnormal_reason_desc,
+             relationship,
+             is_vip)
+            SELECT p.policy_no,
+                   p.branch_code,
+                   c.client_name,
+                   c.sex_code,
+                   floor(months_between(p.apply_date, c.birthday) / 12),
+                   d.product_code,
+                   (SELECT SUM(m.period_standard_prem)
+                      FROM policy_product_prem m
+                     WHERE p.policy_no = m.policy_no
+                       AND d.prod_seq = m.prod_seq),
+                   nvl(t.provide_date, p.issue_date),
+                   t.client_sign_date,
+                   t.confirm_date,
+                   p.channel_type,
+                   p.department_no,
+                   v_abnormal_flag,
+                   v_abnormal_info,
+                   v_abnormal_desc,
+                   d.relationship,
+                   v_is_vip
+              FROM policy             p,
+                   client_information c,
+                   policy_product     d,
+                   policy_contract    t
+             WHERE p.policy_no = p_policy_no
+               AND p.applicant_no = c.client_no
+               AND p.policy_no = d.policy_no
+               AND d.is_primary_plan = 'Y'
+               AND p.policy_no = t.policy_no(+)
+               AND NOT EXISTS (SELECT 1
+                      FROM mcc_uw_callback_policy
+                     WHERE policy_no = p_policy_no)
+               AND rownum = 1;
+         IF SQL%ROWCOUNT <> 1 THEN
+            p_flag    := 'N';
+            p_message := 'uw_callback_policy_插入错误_' || SQL%ROWCOUNT;
+            raise_application_error(-20000, p_message);
+         ELSE
+            p_flag := 'Y';
+         END IF;
+      END IF;
+   EXCEPTION
+      WHEN OTHERS THEN
+         ROLLBACK TO uw_import_start;
+         p_flag    := 'N';
+         p_message := substr(SQLERRM, 1, 150);
+   END per_uw_callback_import;
+
+   --**************************************************************
+   --功能说明：
+   --    回访数据导入批次之逐单入口，新契约回访TSS数据MCC_UW_CALLBACK_POLICY表部分
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --    输出参数：
+   --        p_flag    ：返回标志 Y-成功，N-失败
+   --        p_message ：返回信息
+   --修改记录：create by kui.wang@sino-life.com 2013.07
+   --************************************************************
+   PROCEDURE per_tss_callback_import(p_policy_no IN mcc_callback_task.policy_no%TYPE,
+                                     p_flag      OUT VARCHAR2,
+                                     p_message   OUT VARCHAR2) IS
+      v_abnormal_flag mcc_uw_callback_policy.is_abnormal%TYPE;
+      v_abnormal_info mcc_uw_callback_policy.abnormal_reason%TYPE;
+      v_abnormal_desc mcc_uw_callback_policy.abnormal_reason_desc%TYPE;
+   BEGIN
+      p_flag := 'N';
+      abnormal_tss_policy(p_policy_no,
+                          v_abnormal_flag,
+                          v_abnormal_info,
+                          v_abnormal_desc,
+                          p_flag,
+                          p_message);
+      INSERT INTO mcc_uw_callback_policy
+         (policy_no,
+          branch_code,
+          app_name,
+          app_sex,
+          app_age,
+          product_code,
+          prem_sum,
+          provide_date,
+          client_sign_date,
+          input_date,
+          channel_type,
+          department_no,
+          is_abnormal,
+          abnormal_reason,
+          abnormal_reason_desc,
+          relationship,
+          scruple_date)
+         SELECT a.policy_no,
+                a.branch_code,
+                c.name,
+                c.sex,
+                floor(months_between(a.apply_date, c.birthday) / 12),
+                d.product_code,
+                a.prem,
+                a.apply_date,
+                a.sign_date,
+                a.sign_input_date,
+                '06',
+                g.sale_com_code,
+                v_abnormal_flag,
+                v_abnormal_info,
+                v_abnormal_desc,
+                d.relation_to_insured,
+                a.effect_date + 10
+           FROM t_apply_info           a,
+                t_client               c,
+                t_apply_product        d,
+                t_apply_agent_relation g
+          WHERE a.policy_no = p_policy_no
+            AND a.apply_no = d.apply_no
+            AND d.main_type = '1'
+            AND a.client_no = c.client_no
+            AND a.apply_no = g.apply_no
+            AND NOT EXISTS (SELECT 1
+                   FROM mcc_uw_callback_policy
+                  WHERE policy_no = p_policy_no);
+
+      p_flag := 'Y';
+   END per_tss_callback_import;
+
+   --**************************************************************
+   --功能说明：
+   --    新契约回访异常单信息SLIS
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --    输出参数：
+   --        p_abnormal_flag ：Y-异常单，N-正常单
+   --        p_abnormal_info ：异常原因
+   --        p_flag    ：返回标志 Y-成功，N-失败
+   --        p_message ：返回信息
+   --修改记录：create by kui.wang@sino-life.com 2013.07
+   --************************************************************
+   PROCEDURE abnormal_uw_policy(p_policy_no     IN mcc_callback_task.policy_no%TYPE,
+                                p_abnormal_flag OUT mcc_uw_callback_policy.is_abnormal%TYPE,
+                                p_abnormal_info OUT mcc_uw_callback_policy.abnormal_reason%TYPE,
+                                p_abnormal_desc OUT mcc_uw_callback_policy.abnormal_reason_desc%TYPE,
+                                p_flag          OUT VARCHAR2,
+                                p_message       OUT VARCHAR2) IS
+      v_flag VARCHAR2(20);
+      CURSOR c_phone IS
+         SELECT DISTINCT p.phone_no
+           FROM policy_contact_info c,
+                client_phone        p
+          WHERE c.policy_no = p_policy_no
+            AND (c.phone_seq = p.phone_seq OR c.mobile_phone_seq = p.phone_seq OR
+                c.home_phone_seq = p.phone_seq OR c.office_phone_seq = p.phone_seq);
+      CURSOR c_client(v_phone_no IN VARCHAR2) IS
+         SELECT DISTINCT c.client_no
+           FROM client_phone c,
+                policy       p
+          WHERE c.phone_no = v_phone_no
+            AND p.effect_date >= SYSDATE - 365
+            AND c.client_no = p.applicant_no
+               --需求DMP-3580排除团险渠道保单
+            AND p.channel_type <> '11'
+               --需求DMP-7044排除停用电话号码
+            AND c.phone_status = '1';
+
+      --需求DMP-8316 MCC系统新契约回访重复号码校验规则调整需求 增加获取所有业务员信息
+      CURSOR c_staff(v_phone_no IN VARCHAR2) IS
+         SELECT DISTINCT si.emp_no,
+                         decode(si.leave_date, NULL, '(在职)', '(离职)') leave_desc
+           FROM staff_info  si,
+                staff_phone sp
+          WHERE sp.phone_no = v_phone_no
+            AND sp.emp_no = si.emp_no;
+      v_policy_no policy.policy_no%TYPE;
+   BEGIN
+      p_abnormal_flag := 'N';
+      p_abnormal_info := '';
+      p_abnormal_desc := '';
+
+      FOR v_phone IN c_phone
+      LOOP
+         IF phone_no_check(v_phone.phone_no) > 0 THEN
+            SELECT MAX(s.emp_no)
+              INTO v_flag
+              FROM staff_phone s
+             WHERE s.phone_no = v_phone.phone_no;
+            IF v_flag IS NOT NULL AND is_agent_policy(p_policy_no) = 'N' THEN
+               p_abnormal_flag := 'Y';
+               p_abnormal_info := '2'; --与业务员号码重复
+               p_abnormal_desc := p_abnormal_desc || v_phone.phone_no || '与';
+               FOR v_staff IN c_staff(v_phone.phone_no)
+
+               LOOP
+
+                  IF p_abnormal_desc IS NULL OR lengthb(p_abnormal_desc) < 450 THEN
+                     p_abnormal_desc := p_abnormal_desc || v_staff.emp_no || v_staff.leave_desc || ' ';
+                  END IF;
+
+               END LOOP;
+               p_abnormal_desc := p_abnormal_desc || '业务员号码重复';
+            END IF;
+            SELECT COUNT(DISTINCT c.client_no)
+              INTO v_flag
+              FROM client_phone c,
+                   policy       p
+             WHERE c.phone_no = v_phone.phone_no
+               AND p.effect_date >= SYSDATE - 365
+               AND c.client_no = p.applicant_no
+                  --需求DMP-3580排除团险渠道保单
+               AND p.channel_type <> '11'
+                  --需求DMP-7044排除停用电话号码
+               AND c.phone_status = '1';
+            IF v_flag >= 3 AND is_agent_policy(p_policy_no) = 'N' THEN
+               p_abnormal_flag := 'Y';
+               p_abnormal_info := '1'; --投保人号码重复
+               p_abnormal_desc := p_abnormal_desc || v_phone.phone_no || '被';
+               FOR v_client IN c_client(v_phone.phone_no)
+               LOOP
+                  IF lengthb(p_abnormal_desc) < 460 THEN
+                     p_abnormal_desc := p_abnormal_desc || v_client.client_no || ',';
+                  END IF;
+               END LOOP;
+               p_abnormal_desc := p_abnormal_desc || '共用 ';
+            END IF;
+         END IF;
+         /*取消“异常号码”的识别功能
+         if phone_no_check(v_phone.phone_no) < 0 then
+           p_abnormal_flag := 'Y';
+           p_abnormal_info := '3';--电话号码格式异常
+           p_abnormal_desc := p_abnormal_desc||v_phone.phone_no||'格式异常';
+         end if;*/
+      END LOOP;
+      SELECT MAX(b.old_policy_no)
+        INTO v_policy_no
+        FROM uw_apply_info                 a,
+             pos_nbu_rollback_reapply_info b,
+             policy                        p
+       WHERE a.policy_no = p_policy_no
+         AND a.apply_bar_code = b.new_apply_bar_code
+         AND a.policy_no = p.policy_no;
+      IF v_policy_no IS NOT NULL THEN
+         p_abnormal_flag := 'Y';
+         p_abnormal_info := '4'; --契撤重投单
+         IF p_abnormal_desc IS NULL OR lengthb(p_abnormal_desc) < 450 THEN
+            p_abnormal_desc := p_abnormal_desc || '该单是保单' || v_policy_no || '的契撤重投单；';
+         END IF;
+      END IF;
+   END abnormal_uw_policy;
+
+   --**************************************************************
+   --功能说明：
+   --    新契约回访异常单信息TSS
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --    输出参数：
+   --        p_abnormal_flag ：Y-异常单，N-正常单
+   --        p_abnormal_info ：异常原因
+   --        p_flag    ：返回标志 Y-成功，N-失败
+   --        p_message ：返回信息
+   --修改记录：create by kui.wang@sino-life.com 2013.07
+   --************************************************************
+   PROCEDURE abnormal_tss_policy(p_policy_no     IN mcc_callback_task.policy_no%TYPE,
+                                 p_abnormal_flag OUT mcc_uw_callback_policy.is_abnormal%TYPE,
+                                 p_abnormal_info OUT mcc_uw_callback_policy.abnormal_reason%TYPE,
+                                 p_abnormal_desc OUT mcc_uw_callback_policy.abnormal_reason_desc%TYPE,
+                                 p_flag          OUT VARCHAR2,
+                                 p_message       OUT VARCHAR2) IS
+      v_flag VARCHAR2(5);
+      CURSOR c_phone IS
+         SELECT DISTINCT p.phone_no
+           FROM t_client     t,
+                client_phone p,
+                t_apply_info i
+          WHERE i.policy_no = p_policy_no
+            AND t.client_no = i.client_no
+            AND (t.homephone_seq = p.phone_seq OR t.officephone_seq = p.phone_seq OR
+                t.contactphone_seq = p.phone_seq OR t.ocontactphone_seq = p.phone_seq OR
+                t.mobilephone_seq = p.phone_seq);
+      CURSOR c_client(v_phone_no IN VARCHAR2) IS
+         SELECT DISTINCT c.client_no
+           FROM t_apply_info a,
+                t_client     b,
+                client_phone c,
+                policy       p
+          WHERE c.phone_no = v_phone_no
+            AND (a.client_no = b.client_no AND b.custom_id = c.client_no AND
+                a.effect_date >= SYSDATE - 365 OR
+                c.client_no = p.applicant_no AND p.effect_date >= SYSDATE - 365);
+   BEGIN
+      p_abnormal_flag := 'N';
+      p_abnormal_info := '';
+      p_abnormal_desc := '';
+
+      FOR v_phone IN c_phone
+      LOOP
+         SELECT COUNT(DISTINCT(c.client_no))
+           INTO v_flag
+           FROM t_apply_info a,
+                t_client     b,
+                client_phone c,
+                policy       p
+          WHERE c.phone_no = v_phone.phone_no
+            AND (a.client_no = b.client_no AND b.custom_id = c.client_no AND
+                a.effect_date >= SYSDATE - 365 OR
+                c.client_no = p.applicant_no AND p.effect_date >= SYSDATE - 365);
+         IF v_flag > 3 THEN
+            p_abnormal_flag := 'Y';
+            p_abnormal_info := '1'; --投保人号码重复
+            p_abnormal_desc := p_abnormal_desc || v_phone.phone_no || '被';
+            FOR v_client IN c_client(v_phone.phone_no)
+            LOOP
+               IF lengthb(p_abnormal_desc) < 470 THEN
+                  p_abnormal_desc := p_abnormal_desc || v_client.client_no || ',';
+               END IF;
+            END LOOP;
+            p_abnormal_desc := p_abnormal_desc || '共用 ';
+         END IF;
+         /*取消“异常号码”的识别功能
+         if phone_no_check(v_phone.phone_no) < 0 then
+           p_abnormal_flag := 'Y';
+           p_abnormal_info := '3';--电话号码格式异常
+           p_abnormal_desc := p_abnormal_desc||v_phone.phone_no||'格式异常';
+         end if;*/
+      END LOOP;
+
+   END abnormal_tss_policy;
+
+   --**************************************************************
+   --功能说明：
+   --    是否投保人是业务员SLIS
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --    输出参数：
+   --        p_flag    ：返回标志 Y-是，N-不是
+   --修改记录：create by kui.wang@sino-life.com 2013.07
+   --************************************************************
+   FUNCTION is_agent_policy(p_policy_no IN policy.policy_no%TYPE) RETURN VARCHAR2 IS
+      v_flag VARCHAR2(1);
+   BEGIN
+      SELECT nvl(MAX('Y'), 'N')
+        INTO v_flag
+        FROM policy             p,
+             staff_info         s,
+             client_information c
+       WHERE p.policy_no = p_policy_no
+            --and p.agent_no = s.emp_no--自保件才有这个条件
+         AND p.applicant_no = c.client_no
+         AND s.emp_idno = c.idno
+         AND s.id_type = c.id_type;
+      RETURN v_flag;
+   END is_agent_policy;
+
+   --**************************************************************
+   --功能说明：
+   --    电话号码格式判断
+   --参数说明：
+   --    输入参数
+   --        p_phone_no ：电话号
+   --    输出参数：
+   --        返回标志 1-正确的手机号，-1 - 错误的手机号
+   --                 2-正确的座机号，-2 - 错误的座机号
+   --                 号码类型仅供参考
+   --修改记录：create by kui.wang@sino-life.com 2013.07
+   --************************************************************
+   FUNCTION phone_no_check(p_phone_no IN VARCHAR2) RETURN VARCHAR2 IS
+      v_phone_no VARCHAR2(100);
+      v_flag     VARCHAR2(2);
+   BEGIN
+      v_phone_no := p_phone_no;
+      v_phone_no := REPLACE(v_phone_no, '+86-', '');
+      v_phone_no := REPLACE(v_phone_no, '-', '');
+      v_phone_no := REPLACE(v_phone_no, ' ', '');
+      v_phone_no := REPLACE(v_phone_no, '  ', '');
+
+      BEGIN
+         SELECT to_number(v_phone_no)
+           INTO v_phone_no
+           FROM dual;
+      EXCEPTION
+         WHEN invalid_number THEN
+            v_flag := '-1';
+            RETURN v_flag;
+      END;
+
+      IF v_phone_no LIKE '1%' THEN
+         v_flag := '1';
+         IF NOT (length(v_phone_no) = 11 AND substr(v_phone_no, 1, 2) IN ('13', '14', '15', '18')) THEN
+            v_flag := '-1';
+         END IF;
+      ELSE
+         v_flag := '2';
+         IF length(v_phone_no) < 7 OR v_phone_no LIKE '0%' THEN
+            v_flag := '-2';
+         END IF;
+      END IF;
+
+      RETURN v_flag;
+   END phone_no_check;
+
+   --**************************************************************
+   --功能说明：
+   --    活动归类,有的activity_id不同，但也是互斥的，只活动一次
+   --参数说明：
+   --    输入参数
+   --        p_activity ：活动号
+   --    输出参数：
+   --        返回标志 同一类活动是同一个代码
+   --修改记录：create by kui.wang@sino-life.com 2013.07
+   --************************************************************
+   FUNCTION activity_type(p_activity IN mcc_activity.activity_id%TYPE) RETURN VARCHAR2 IS
+      v_flag VARCHAR2(2);
+   BEGIN
+      IF p_activity IN
+         ('1000000001', '1000000002', '1000000007', '1000000016', '1000000017', '1000000018') THEN
+         v_flag := '1';
+      ELSE
+         v_flag := '99';
+      END IF;
+      RETURN v_flag;
+   END activity_type;
+
+   PROCEDURE test_uw_import(p_policy_no IN mcc_callback_task.policy_no%TYPE,
+                            p_flag      OUT VARCHAR2,
+                            p_message   OUT VARCHAR2) IS
+      v_client_no mcc_callback_task.client_no%TYPE;
+      v_apply_no  policy.apply_no%TYPE;
+      v_task_id   mcc_callback_task.task_id%TYPE;
+   BEGIN
+      SELECT MAX(applicant_no),
+             MAX(apply_no)
+        INTO v_client_no,
+             v_apply_no
+        FROM policy
+       WHERE policy_no = p_policy_no;
+      IF v_client_no IS NULL THEN
+         SELECT client_no,
+                apply_no
+           INTO v_client_no,
+                v_apply_no
+           FROM t_apply_info
+          WHERE policy_no = p_policy_no;
+      END IF;
+      per_callback_import_com(p_policy_no,
+                              v_client_no,
+                              '1000000001',
+                              'default',
+                              v_apply_no,
+                              '1',
+                              v_task_id,
+                              p_flag,
+                              p_message);
+      p_flag := 'Y';
+   EXCEPTION
+      WHEN OTHERS THEN
+         p_flag    := 'N';
+         p_message := SQLERRM;
+   END test_uw_import;
+   --**************************************************************
+   --功能说明：
+   --    网上回访调用接口
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --        p_client_no:  投保人客户号
+   --        p_apply_no :投保单号（可空）
+   --    输出参数：
+   --        p_flag 返回标志 1-处理成功，2处理失败，3已经完成过网上回访，4已经完成电话回访
+   --        p_message 返回处理详细信息
+   --修改记录：create by ke.xiao@sino-life.com 2014.06
+   --************************************************************
+
+   PROCEDURE web_callback_policy(p_policy_no IN mcc_callback_task.policy_no%TYPE,
+                                 p_client_no IN mcc_callback_task.client_no%TYPE,
+                                 p_apply_no  IN mcc_callback_task.business_no%TYPE,
+                                 p_flag      OUT VARCHAR2,
+                                 p_message   OUT VARCHAR2) IS
+      v_apply_no        policy.apply_no%TYPE;
+      v_task_id         mcc_callback_task.task_id%TYPE;
+      v_count1          NUMBER;
+      v_count2          NUMBER;
+      v_callback_status mcc_callback_task.callback_status%TYPE;
+      v_new_task_id     mcc_callback_task.task_id%TYPE;
+      v_workorder_id    mcc_workorder.workorder_id%TYPE;
+      v_task_count      NUMBER;
+      v_task_assignee   mcc_wf_task_queue.task_assignee%TYPE;
+      v_content         mcc_workorder.content%TYPE;
+      CURSOR c_user(v_du VARCHAR2) IS
+         SELECT user_code
+           FROM mcc_user_role
+          WHERE role_code = '0001'
+            AND valid_flag = 'Y'
+            AND v_du IS NULL
+         UNION
+         SELECT v_du user_code
+           FROM dual
+          WHERE v_du IS NOT NULL;
+      v_deal_user mcc_callback_task.deal_user%TYPE;
+      v_notice_id mcc_notice.notice_id%TYPE;
+      v_uw_result mcc_uw_callback_policy.uw_result%TYPE;
+      v_flag      VARCHAR2(2);
+      v_msg_id    mcc_wf_msg_queue.msg_id%TYPE;
+      v_message   VARCHAR2(4000);
+      CURSOR c_workorder_transfer(cp_workorder_id VARCHAR2) IS
+         SELECT mwtq.business_key,
+                mwtq.task_assignee
+           FROM mcc_workorder_transfer_info mwti,
+                mcc_wf_task_queue           mwtq
+          WHERE mwti.workorder_id = cp_workorder_id
+            AND mwti.workflow_id = mwtq.business_key
+            AND mwtq.is_finished = '0';
+   BEGIN
+
+      v_apply_no := p_apply_no;
+      IF p_apply_no IS NULL THEN
+         SELECT MAX(apply_no)
+           INTO v_apply_no
+           FROM policy
+          WHERE policy_no = p_policy_no;
+      END IF;
+
+      SELECT MAX(task_id)
+        INTO v_task_id
+        FROM mcc_callback_task
+       WHERE policy_no = p_policy_no
+         AND activity_id = '1000000007';
+      IF v_task_id IS NOT NULL THEN
+         p_flag    := '3';
+         p_message := '已经完成过网上回访，无需再次处理,回访任务号：' || v_task_id;
+      ELSE
+         SELECT MAX(task_id),
+                MAX(callback_status),
+                MAX(deal_user)
+           INTO v_task_id,
+                v_callback_status,
+                v_deal_user
+           FROM mcc_callback_task
+          WHERE policy_no = p_policy_no
+            AND activity_id IN ('1000000001', '1000000002')
+            AND callback_status <> '3';
+         --    DMP-5800 MCC系统电商渠道保单回访优化需求
+         -- 增加下发了首访问题件及首访未完成件工单的保单，其线上回访链接仍然有效，可继续进行线上回访
+         SELECT MAX(uw_result)
+           INTO v_uw_result
+           FROM mcc_uw_callback_policy
+          WHERE policy_no = p_policy_no;
+         --IF v_task_id IS NOT NULL AND nvl(v_callback_status, '1') = '3' THEN
+         IF nvl(v_uw_result, '2') NOT IN ('2', '3') THEN
+            --4) MCC系统首访完成后，网上回访同步失效。
+            p_flag    := '4';
+            p_message := '已经完成过电话回访，无需再次处理，回访任务号：' || v_task_id;
+         ELSE
+
+            v_new_task_id := mcccde.mcc_pub.fetch_seq(p_table_name  => 'mcc_callback_task',
+                                                      p_column_name => 'task_id',
+                                                      p_table_owner => 'mccdata');
+            INSERT INTO mcc_callback_task
+               (task_id,
+                activity_id,
+                tenant_code,
+                extract_date,
+                distribute_date,
+                finish_date,
+                policy_no,
+                business_no,
+                client_no,
+                task_type,
+                callback_status)
+            VALUES
+               (v_new_task_id,
+                '1000000007',
+                'default',
+                SYSDATE,
+                SYSDATE,
+                SYSDATE,
+                p_policy_no,
+                v_apply_no,
+                p_client_no,
+                '1',
+                '3');
+            SELECT COUNT(1)
+              INTO v_count1
+              FROM policy
+             WHERE policy_no = p_policy_no;
+            IF v_count1 = '1' THEN
+               SELECT COUNT(1)
+                 INTO v_count2
+                 FROM mcc_uw_callback_policy
+                WHERE policy_no = p_policy_no;
+               IF v_count2 = '0' THEN
+                  per_uw_callback_import(p_policy_no, p_flag, p_message);
+
+               END IF;
+               --需要修改回访状态为网上回访成功(限定“E理财”、“聚利宝”两个产品)
+               UPDATE mcc_uw_callback_policy p
+                  SET p.uw_result        = '7',
+                      p.task_finish_date = SYSDATE,
+                      p.real_finish_date = SYSDATE
+                WHERE policy_no = p_policy_no
+                  AND get_web_callback_activity_id(p_product_code => p.product_code) = '1000000007';
+            END IF;
+            IF nvl(v_callback_status, '3') <> '3' THEN
+               --若网上回访完成时MCC系统首访还未完成，则MCC系统对应的回访任务自动撤销；
+               UPDATE mcc_callback_task
+                  SET callback_status = '3'
+                WHERE task_id = v_task_id;
+               mcccde.mcc_pub.get_seq('mcc_notice',
+                                      'notice_id',
+                                      'mccdata',
+                                      v_notice_id,
+                                      p_flag,
+                                      p_message);
+               INSERT INTO mcc_notice
+                  (notice_id,
+                   notice_type,
+                   notice_theme,
+                   notice_level,
+                   notice_create_time,
+                   renter_id,
+                   notice_text,
+                   reply_mark,
+                   whether_remian)
+               VALUES
+                  (v_notice_id,
+                   '2',
+                   '回访任务取消通知',
+                   '0',
+                   SYSDATE,
+                   'default',
+                   '保单' || p_policy_no || '因网上回访成功（回访任务号' || v_new_task_id || '），其电话回访任务被终止。',
+                   '0',
+                   '1');
+               FOR v_user IN c_user(v_deal_user)
+               LOOP
+                  INSERT INTO mcc_notice_reader
+                     (notice_id,
+                      reader_id)
+                  VALUES
+                     (v_notice_id,
+                      v_user.user_code);
+               END LOOP;
+            END IF;
+            --工单任务处理
+            SELECT MAX(mw.workorder_id)
+              INTO v_workorder_id
+              FROM mcc_workorder        mw,
+                   mcc_workorder_policy mwp
+             WHERE mw.workorder_id = mwp.workorder_id
+               AND mwp.policy_no = p_policy_no
+               AND mw.workorder_type IN ('210001', '210002', '210003')
+               AND mw.workorder_status NOT IN ('6', '7')
+               AND nvl(mwp.valid_flag, 'Y') = 'Y';
+            IF v_workorder_id IS NOT NULL THEN
+               SELECT COUNT(1)
+                 INTO v_task_count
+                 FROM mcc_workorder_policy
+                WHERE workorder_id = v_workorder_id
+                  AND nvl(valid_flag, 'Y') = 'Y';
+               IF v_task_count > 1 THEN
+                  --修改状态为无效
+                  UPDATE mcc_workorder_policy
+                     SET valid_flag = 'N'
+                   WHERE workorder_id = v_workorder_id
+                     AND policy_no = p_policy_no;
+                  --修改工单内容
+                  SELECT content
+                    INTO v_content
+                    FROM mcc_workorder
+                   WHERE workorder_id = v_workorder_id;
+                  IF lengthb(v_content) > 420 THEN
+                     UPDATE mcc_workorder mw
+                        SET mw.content = mw.content || chr(10) || '因保单' || p_policy_no || '网上回访成功' ||
+                                         '，该保单已从该工单任务中删除。'
+                      WHERE workorder_id = v_workorder_id;
+                  END IF;
+                  SELECT MAX(mwtq.task_assignee)
+                    INTO v_task_assignee
+                    FROM mcc_wf_task_queue mwtq
+                   WHERE mwtq.business_key = v_workorder_id
+                     AND mwtq.is_finished = '0';
+                  IF v_task_assignee IS NOT NULL THEN
+                     mcccde.mcc_pub.get_seq('mcc_notice',
+                                            'notice_id',
+                                            'mccdata',
+                                            v_notice_id,
+                                            v_flag,
+                                            v_message);
+                     INSERT INTO mcc_notice
+                        (notice_id,
+                         notice_type,
+                         notice_theme,
+                         notice_level,
+                         notice_create_time,
+                         renter_id,
+                         notice_text,
+                         reply_mark,
+                         whether_remian)
+                     VALUES
+                        (v_notice_id,
+                         '2',
+                         '工单任务更改通知',
+                         '0',
+                         SYSDATE,
+                         'default',
+                         '工单' || v_workorder_id || '因保单' || p_policy_no || '网上回访成功' ||
+                         '，该保单已从该工单任务中删除。',
+                         '0',
+                         '1');
+
+                     --通知任务处理人
+                     INSERT INTO mcc_notice_reader
+                        (notice_id,
+                         reader_id)
+                     VALUES
+                        (v_notice_id,
+                         v_task_assignee);
+
+                  END IF;
+               ELSE
+                  --修改工单状态为7-已撤销
+                  UPDATE mcc_workorder mw
+                     SET mw.workorder_status = '7'
+                   WHERE mw.workorder_id = v_workorder_id;
+                  --查看工作流状态
+                  SELECT MAX(mwtq.task_assignee),
+                         COUNT(1)
+                    INTO v_task_assignee,
+                         v_task_count
+                    FROM mcc_wf_task_queue mwtq
+                   WHERE mwtq.business_key = v_workorder_id
+                     AND mwtq.is_finished = '0';
+                  --存在未完成的工作流任务,则写入终止消息
+                  IF v_task_count <> '0' THEN
+                     --调用工作流接口写入消息
+                     l_wf_mcc_interface.abort_process(p_process_name => 'mcc_main_process',
+                                                      p_business_key => v_workorder_id,
+                                                      p_msg_id       => v_msg_id);
+                     IF v_task_assignee IS NOT NULL THEN
+                        --写入通知记录
+                        mcccde.mcc_pub.get_seq('mcc_notice',
+                                               'notice_id',
+                                               'mccdata',
+                                               v_notice_id,
+                                               v_flag,
+                                               v_message);
+                        INSERT INTO mcc_notice
+                           (notice_id,
+                            notice_type,
+                            notice_theme,
+                            notice_level,
+                            notice_create_time,
+                            renter_id,
+                            notice_text,
+                            reply_mark,
+                            whether_remian)
+                        VALUES
+                           (v_notice_id,
+                            '2',
+                            '工单任务取消通知',
+                            '0',
+                            SYSDATE,
+                            'default',
+                            '工单' || v_workorder_id || '因保单' || p_policy_no || '网上回访成功' ||
+                            '，其工单任务被终止。',
+                            '0',
+                            '1');
+                        --通知任务处理人
+                        INSERT INTO mcc_notice_reader
+                           (notice_id,
+                            reader_id)
+                        VALUES
+                           (v_notice_id,
+                            v_task_assignee);
+                     END IF;
+                     --将未完成的转办任务进行终止
+                     FOR v_workorder_transfer IN c_workorder_transfer(v_workorder_id)
+                     LOOP
+                        --调用工作流接口写入消息
+                        l_wf_mcc_interface.abort_process(p_process_name => 'mcc_sub_process',
+                                                         p_business_key => v_workorder_transfer.business_key,
+                                                         p_msg_id       => v_msg_id);
+                        IF v_workorder_transfer.task_assignee IS NOT NULL THEN
+                           --写入通知记录
+                           mcccde.mcc_pub.get_seq('mcc_notice',
+                                                  'notice_id',
+                                                  'mccdata',
+                                                  v_notice_id,
+                                                  v_flag,
+                                                  v_message);
+                           INSERT INTO mcc_notice
+                              (notice_id,
+                               notice_type,
+                               notice_theme,
+                               notice_level,
+                               notice_create_time,
+                               renter_id,
+                               notice_text,
+                               reply_mark,
+                               whether_remian)
+                           VALUES
+                              (v_notice_id,
+                               '2',
+                               '工单任务取消通知',
+                               '0',
+                               SYSDATE,
+                               'default',
+                               '工单' || v_workorder_id || '因保单' || p_policy_no || '网上回访成功' ||
+                               '，其工单任务被终止。',
+                               '0',
+                               '1');
+                           --通知任务处理人
+                           INSERT INTO mcc_notice_reader
+                              (notice_id,
+                               reader_id)
+                           VALUES
+                              (v_notice_id,
+                               v_workorder_transfer.task_assignee);
+                        END IF;
+                     END LOOP;
+                  END IF;
+               END IF;
+            END IF;
+            p_flag    := '1';
+            p_message := '处理成功！';
+         END IF;
+      END IF;
+
+   EXCEPTION
+      WHEN OTHERS THEN
+         p_flag    := '2';
+         p_message := SQLERRM;
+   END web_callback_policy;
+   --**************************************************************
+   --功能说明：
+   --    网上在线回访活动归类,根据业务不同的要求，确定网上在线回访所属的活动号
+   --    目前只有险种一个参数会影响，故暂时确定输入参数为险种代码
+   --    根据业务需求：
+   --                 DMP-4173 MCC系统电商渠道新契约保单抽单规则调整
+   --                 DMP-4539  MCC系统成长红包回访抽单规则调整
+   --                 DMP-5150  MCC系统E理财A款保险抽单规则
+   --                 ID为1000000007的险种代码为：'UNED_AN1', 'UNAN_CN1', 'UNAN_AN1', 'CEAN_AN1','UEAN_DN1'
+   --                 DMP-5714电商渠道京东销售保单MCC系统抽单规则 需求增加：三年期e理财A款第二版：UEAN_FN1，一年期e理财第三版：UEAN_GN1两个险种
+   --                  DMP-5726 MCC系统百度金融抽单规则设置需求  需求增加E启赢产品 ： UEAN_AN1
+   --                 DMP-7171成长守护少儿重疾线上回访及MCC系统抽单规则调整需求  需求增加成长守护少儿重疾线产品 ：CEDD_DN1
+   --                DMP-7545招行投连项目回访抽单规则需求  需求增加生命e启赢B款产品 ： UEAN_BN1
+   --                    DMP-7864电商渠道真心真意重疾险回访抽单规则  需求增加真心真意重疾险:CNDD_IN1\CNED_JN0
+   --                 DMP-7729 MCC系统百度金融抽单规则设置需求 需求增加e启赢C：UEAN_CN1
+   --        DMP-9256电商渠道富德生命安E盈年金保险回访抽单规则 需求增加安E盈年金保险：UEAN_LN1
+   --        DMP-9739MCC系统电商渠道E理财第二版抽单规则 需求增加E理财第二版：UEAN_PN1
+   --        DMP-9808 MCC系统电商渠道招财宝一号、二号抽单规则 需求增加招财宝一号UEAN_MN1，招财宝二号UEAN_NN1
+   --参数说明：
+   --    输入参数
+   --        p_product_code ：险种代码
+   --    输出参数：
+   --        返回标志 活动ID
+   --修改记录：create by ke.xiao@sino-life.com 2014.07
+   --************************************************************
+   FUNCTION get_web_callback_activity_id(p_product_code IN VARCHAR2) RETURN VARCHAR2 IS
+      v_activity mcc_activity.activity_id%TYPE;
+   BEGIN
+      --DMP-10339修改为读取控制表数据
+      /*IF p_product_code IN ('UNED_AN1',
+                            'UNAN_CN1',
+                            'UNAN_AN1',
+                            'CEAN_AN1',
+                            'UEAN_DN1',
+                            'UEAN_FN1',
+                            'UEAN_GN1',
+                            'UEAN_AN1',
+                            'CEDD_DN1',
+                            'UEAN_BN1',
+                            'CNED_JN0',
+                            'CNDD_IN1',
+                            'UEAN_CN1',
+                            'UEAN_LN1',
+                            'UEAN_PN1',
+                            'UEAN_MN1',
+                            'UEAN_NN1') THEN
+         v_activity := '1000000007';
+      ELSE
+         v_activity := '1000000004';
+      END IF;*/
+      SELECT decode(COUNT(1), 0, '1000000004', '1000000007')
+        INTO v_activity
+        FROM mcc_web_callback_set_tbl
+       WHERE product_code = p_product_code
+         AND valid_flag = 'Y';
+      RETURN v_activity;
+   END get_web_callback_activity_id;
+
+   --**************************************************************
+   --功能说明：
+   --    根据保单号补导入保单回访数据
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --    输出参数：
+   --        p_flag    ：返回标志 Y-成功，N-失败
+   --        p_message ：返回信息
+   -- p_task_id :回访任务号
+   --修改记录：create by ke.xiao@sino-life.com 2014.07
+   --************************************************************
+   PROCEDURE manual_uw_import_by_policy(p_policy_no IN mcc_callback_task.policy_no%TYPE,
+                                        p_task_id   OUT mcc_callback_task.task_id%TYPE,
+                                        p_flag      OUT VARCHAR2,
+                                        p_message   OUT VARCHAR2) IS
+      v_client_no        mcc_callback_task.client_no%TYPE;
+      v_apply_no         policy.apply_no%TYPE;
+      v_task_id          mcc_callback_task.task_id%TYPE;
+      v_client_sign_date policy_contract.client_sign_date%TYPE;
+      v_channel_type     policy.channel_type%TYPE;
+
+   BEGIN
+      SELECT MAX(client_sign_date)
+        INTO v_client_sign_date
+        FROM policy_contract
+       WHERE policy_no = p_policy_no;
+      SELECT MAX(channel_type)
+        INTO v_channel_type
+        FROM policy
+       WHERE policy_no = p_policy_no;
+      IF v_client_sign_date IS NULL AND v_channel_type = '01' THEN
+         p_flag    := 'N';
+         p_message := '保单：' || p_policy_no || '不存在或未签署回执，根据规则无法导入，请核实后再操作！';
+         RETURN;
+      END IF;
+      SELECT MAX(task_id)
+        INTO v_task_id
+        FROM mcc_callback_task m
+       WHERE policy_no = p_policy_no
+         AND m.activity_id = '1000000001';
+      --DMP-15761 不存在新契约电话回访的，均可以手工导入再次进行回访
+      IF v_task_id IS NOT NULL THEN
+         p_flag    := 'N';
+         p_message := '保单：' || p_policy_no || '已经存在有效的回访任务：' || v_task_id || '，无需重复导入回访！';
+         RETURN;
+      ELSE
+         --DMP-15761 不存在新契约电话回访的，将原回访结果失效
+         UPDATE mcc_uw_callback_policy m
+            SET m.uw_result        = '',
+                m.task_finish_date = '',
+                m.real_finish_date = ''
+          WHERE policy_no = p_policy_no;
+      END IF;
+      SELECT MAX(applicant_no),
+             MAX(apply_no)
+        INTO v_client_no,
+             v_apply_no
+        FROM policy
+       WHERE policy_no = p_policy_no;
+
+      IF v_client_no IS NULL THEN
+         SELECT client_no,
+                apply_no
+           INTO v_client_no,
+                v_apply_no
+           FROM t_apply_info
+          WHERE policy_no = p_policy_no;
+      END IF;
+      per_callback_import_com(p_policy_no,
+                              v_client_no,
+                              '1000000001',
+                              'default',
+                              v_apply_no,
+                              '1',
+                              v_task_id,
+                              p_flag,
+                              p_message);
+      IF p_flag = 'Y' THEN
+         p_task_id := v_task_id;
+      END IF;
+   EXCEPTION
+      WHEN OTHERS THEN
+         p_flag    := 'N';
+         p_message := SQLERRM;
+   END manual_uw_import_by_policy;
+   --**************************************************************
+   --功能说明：
+   --    网上在线回访活动归类,根据业务不同的要求，确定网上在线回访所属的活动号
+   --    该接口为根据保单号判断
+   --    根据业务需求：
+   --                    DMP-12674MCC系统新契约回访抽单规则设置优化
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --    输出参数：
+   --        返回标志 活动ID
+   --修改记录：create by ke.xiao@sino-life.com 2016.02
+   --************************************************************
+   FUNCTION get_web_callback_id_by_policy(p_policy_no IN VARCHAR2) RETURN VARCHAR2 IS
+      v_branch_code     policy.branch_code %TYPE;
+      v_channel_type    policy.channel_type%TYPE;
+      v_business_source policy.business_source%TYPE;
+      v_product_code    policy_product.product_code%TYPE;
+      v_activity        mcc_activity.activity_id%TYPE;
+      v_count           NUMBER := '0';
+   BEGIN
+      SELECT MAX(p.branch_code),
+             MAX(pp.product_code),
+             MAX(p.channel_type),
+             MAX(p.business_source)
+        INTO v_branch_code,
+             v_product_code,
+             v_channel_type,
+             v_business_source
+        FROM policy         p,
+             policy_product pp
+       WHERE p.policy_no = p_policy_no
+         AND p.policy_no = pp.policy_no
+         AND pp.is_primary_plan = 'Y';
+      SELECT COUNT(1)
+        INTO v_count
+        FROM mcc_web_callback_set_tbl mwcs
+       WHERE mwcs.product_code = v_product_code
+         AND nvl(mwcs.channel_type, v_channel_type) = v_channel_type
+         AND nvl(mwcs.business_source, v_business_source) = v_business_source
+         AND mwcs.branch_code IN (SELECT branch_code
+                                    FROM branch_info
+                                   START WITH branch_code = v_branch_code
+                                  CONNECT BY PRIOR parent_branch = branch_code)
+         AND valid_flag = 'Y';
+      IF v_count > 0 THEN
+         v_activity := '1000000007';
+      ELSE
+         v_activity := '1000000004';
+      END IF;
+      RETURN v_activity;
+   END get_web_callback_id_by_policy;
+   --**************************************************************
+   --功能说明：
+   --    新契约回访关注信息
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --    输出参数：
+   --        p_ATTENTION_GRADE ：关注级别
+   --        p_ATTENTION_DESC ：关注信息描述
+   --        p_flag    ：返回标志 Y-成功，N-失败
+   --        p_message ：返回信息
+   --修改记录：create by ke.xiao@sino-life.com 2015.03
+   --************************************************************
+   PROCEDURE attention_uw_task(p_policy_no       IN mcc_callback_task.policy_no%TYPE,
+                               p_attention_grade OUT mcc_callback_task.client_attention_grade%TYPE,
+                               p_attention_desc  OUT mcc_callback_task.client_attention_desc%TYPE,
+                               p_flag            OUT VARCHAR2,
+                               p_message         OUT VARCHAR2) IS
+      v_client_no mcc_callback_task.client_no%TYPE;
+      v_prem_sum  policy_product_prem.period_prem_sum%TYPE;
+
+   BEGIN
+      --按保费划分
+      --一星★  客户累计有效保单总保费30万（含）~150万（不含）
+      --二星★★ 客户累计有效保单总保费150万（含）~400万（不含）
+      --三星★★★  客户累计有效保单总保费400万（含）以上
+      p_flag := 'Y';
+      SELECT nvl(SUM(period_prem_sum), '0')
+        INTO v_prem_sum
+        FROM policy_product_prem
+       WHERE policy_no = p_policy_no;
+      SELECT p.applicant_no
+        INTO v_client_no
+        FROM policy p
+       WHERE p.policy_no = p_policy_no;
+      mcc_callback_manage.get_client_attention_grade(p_client_no       => v_client_no,
+                                                     p_phone_no        => '',
+                                                     p_prem_sum        => v_prem_sum,
+                                                     p_attention_grade => p_attention_grade,
+                                                     p_attention_desc  => p_attention_desc,
+                                                     p_flag            => p_flag,
+                                                     p_message         => p_message);
+   EXCEPTION
+      WHEN OTHERS THEN
+         p_flag    := 'N';
+         p_message := SQLERRM;
+   END attention_uw_task;
+
+   --**************************************************************
+   --功能说明：
+   --    网上回访调用接口
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --        p_client_no:  投保人客户号
+   --        p_apply_no :投保单号（可空）
+   --        p_activity_id :活动ID
+   --    输出参数：
+   --        p_flag 返回标志 1-处理成功，2处理失败，3已经完成过网上回访，4已经完成电话回访
+   --        p_message 返回处理详细信息
+   --        p_task_id 返回回访任务号
+   --修改记录：create by ke.xiao@sino-life.com 2016.09
+   --************************************************************
+
+   PROCEDURE web_callback_by_activity_id(p_policy_no   IN mcc_callback_task.policy_no%TYPE,
+                                         p_client_no   IN mcc_callback_task.client_no%TYPE,
+                                         p_apply_no    IN mcc_callback_task.business_no%TYPE,
+                                         p_activity_id IN mcc_callback_task.activity_id%TYPE,
+                                         p_flag        OUT VARCHAR2,
+                                         p_message     OUT VARCHAR2,
+                                         p_task_id     OUT VARCHAR2) IS
+      v_apply_no        policy.apply_no%TYPE;
+      v_task_id         mcc_callback_task.task_id%TYPE;
+      v_count1          NUMBER;
+      v_count2          NUMBER;
+      v_callback_status mcc_callback_task.callback_status%TYPE;
+      v_new_task_id     mcc_callback_task.task_id%TYPE;
+      v_workorder_id    mcc_workorder.workorder_id%TYPE;
+      v_task_count      NUMBER;
+      v_task_assignee   mcc_wf_task_queue.task_assignee%TYPE;
+      v_content         mcc_workorder.content%TYPE;
+      CURSOR c_user(v_du VARCHAR2) IS
+         SELECT user_code
+           FROM mcc_user_role
+          WHERE role_code = '0001'
+            AND valid_flag = 'Y'
+            AND v_du IS NULL
+         UNION
+         SELECT v_du user_code
+           FROM dual
+          WHERE v_du IS NOT NULL;
+      v_deal_user mcc_callback_task.deal_user%TYPE;
+      v_notice_id mcc_notice.notice_id%TYPE;
+      v_uw_result mcc_uw_callback_policy.uw_result%TYPE;
+      v_flag      VARCHAR2(2);
+      v_msg_id    mcc_wf_msg_queue.msg_id%TYPE;
+      v_message   VARCHAR2(4000);
+      CURSOR c_workorder_transfer(cp_workorder_id VARCHAR2) IS
+         SELECT mwtq.business_key,
+                mwtq.task_assignee
+           FROM mcc_workorder_transfer_info mwti,
+                mcc_wf_task_queue           mwtq
+          WHERE mwti.workorder_id = cp_workorder_id
+            AND mwti.workflow_id = mwtq.business_key
+            AND mwtq.is_finished = '0';
+      v_activity_desc mcc_activity.description%TYPE;
+   BEGIN
+      SELECT MAX(description)
+        INTO v_activity_desc
+        FROM mcc_activity ma
+       WHERE ma.activity_id = p_activity_id;
+      /*IF web_callback_activity_id_check(p_policy_no => p_policy_no, p_activity_id => p_activity_id) = 'N' THEN
+         p_flag    := '2';
+         p_message := '保单' || p_policy_no || '按照规则不允许进行' || v_activity_desc;
+         RETURN;
+      END IF;*/
+      v_apply_no := p_apply_no;
+      IF p_apply_no IS NULL THEN
+         SELECT nvl(MAX(apply_no),p_policy_no)
+           INTO v_apply_no
+           FROM policy
+          WHERE policy_no = p_policy_no;
+      END IF;
+
+      SELECT MAX(task_id)
+        INTO v_task_id
+        FROM mcc_callback_task
+       WHERE policy_no = p_policy_no
+         AND activity_type(p_activity_id) = '1'
+         AND callback_status = '3';
+      IF v_task_id IS NOT NULL THEN
+         p_flag    := '3';
+         p_message := '已经完成过回访，无需再次处理,回访任务号：' || v_task_id;
+      ELSE
+         SELECT MAX(task_id),
+                MAX(callback_status),
+                MAX(deal_user)
+           INTO v_task_id,
+                v_callback_status,
+                v_deal_user
+           FROM mcc_callback_task
+          WHERE policy_no = p_policy_no
+            AND activity_id IN ('1000000001', '1000000002')
+            AND callback_status <> '3';
+         --    DMP-5800 MCC系统电商渠道保单回访优化需求
+         -- 增加下发了首访问题件及首访未完成件工单的保单，其线上回访链接仍然有效，可继续进行线上回访
+         SELECT MAX(uw_result)
+           INTO v_uw_result
+           FROM mcc_uw_callback_policy
+          WHERE policy_no = p_policy_no;
+         --IF v_task_id IS NOT NULL AND nvl(v_callback_status, '1') = '3' THEN
+         IF nvl(v_uw_result, '2') NOT IN ('2', '3') THEN
+            --4) MCC系统首访完成后，网上回访同步失效。
+            p_flag    := '4';
+            p_message := '已经完成过电话回访，无需再次处理，回访任务号：' || v_task_id;
+         ELSE
+
+            p_task_id := mcccde.mcc_pub.fetch_seq(p_table_name  => 'mcc_callback_task',
+                                                  p_column_name => 'task_id',
+                                                  p_table_owner => 'mccdata');
+            INSERT INTO mcc_callback_task
+               (task_id,
+                activity_id,
+                tenant_code,
+                extract_date,
+                distribute_date,
+                finish_date,
+                policy_no,
+                business_no,
+                client_no,
+                task_type,
+                callback_status)
+            VALUES
+               (p_task_id,
+                p_activity_id,
+                'default',
+                SYSDATE,
+                SYSDATE,
+                SYSDATE,
+                p_policy_no,
+                v_apply_no,
+                p_client_no,
+                '1',
+                '3');
+            SELECT COUNT(1)
+              INTO v_count1
+              FROM policy
+             WHERE policy_no = p_policy_no;
+            IF v_count1 = '1' THEN
+               SELECT COUNT(1)
+                 INTO v_count2
+                 FROM mcc_uw_callback_policy
+                WHERE policy_no = p_policy_no;
+               IF v_count2 = '0' THEN
+                  per_uw_callback_import(p_policy_no, p_flag, p_message);
+
+               END IF;
+               --需要修改回访状态为网上回访成功(限定“E理财”、“聚利宝”两个产品)
+               UPDATE mcc_uw_callback_policy p
+                  SET p.uw_result        = decode(p_activity_id,
+                                                  '100000004',
+                                                  '',
+                                                  '100000007',
+                                                  '7',
+                                                  '9'),
+                      p.task_finish_date = SYSDATE,
+                      p.real_finish_date = SYSDATE
+                WHERE policy_no = p_policy_no;
+            END IF;
+            IF nvl(v_callback_status, '3') <> '3' THEN
+               --若网上回访完成时MCC系统首访还未完成，则MCC系统对应的回访任务自动撤销；
+               UPDATE mcc_callback_task
+                  SET callback_status = '3'
+                WHERE task_id = v_task_id;
+               mcccde.mcc_pub.get_seq('mcc_notice',
+                                      'notice_id',
+                                      'mccdata',
+                                      v_notice_id,
+                                      p_flag,
+                                      p_message);
+               INSERT INTO mcc_notice
+                  (notice_id,
+                   notice_type,
+                   notice_theme,
+                   notice_level,
+                   notice_create_time,
+                   renter_id,
+                   notice_text,
+                   reply_mark,
+                   whether_remian)
+               VALUES
+                  (v_notice_id,
+                   '2',
+                   '回访任务取消通知',
+                   '0',
+                   SYSDATE,
+                   'default',
+                   '保单' || p_policy_no || '因网上回访成功（回访任务号' || v_new_task_id || '），其电话回访任务被终止。',
+                   '0',
+                   '1');
+               FOR v_user IN c_user(v_deal_user)
+               LOOP
+                  INSERT INTO mcc_notice_reader
+                     (notice_id,
+                      reader_id)
+                  VALUES
+                     (v_notice_id,
+                      v_user.user_code);
+               END LOOP;
+            END IF;
+            --工单任务处理
+            SELECT MAX(mw.workorder_id)
+              INTO v_workorder_id
+              FROM mcc_workorder        mw,
+                   mcc_workorder_policy mwp
+             WHERE mw.workorder_id = mwp.workorder_id
+               AND mwp.policy_no = p_policy_no
+               AND mw.workorder_type IN ('210001', '210002', '210003')
+               AND mw.workorder_status NOT IN ('6', '7')
+               AND nvl(mwp.valid_flag, 'Y') = 'Y';
+            IF v_workorder_id IS NOT NULL THEN
+               SELECT COUNT(1)
+                 INTO v_task_count
+                 FROM mcc_workorder_policy
+                WHERE workorder_id = v_workorder_id
+                  AND nvl(valid_flag, 'Y') = 'Y';
+               IF v_task_count > 1 THEN
+                  --修改状态为无效
+                  UPDATE mcc_workorder_policy
+                     SET valid_flag = 'N'
+                   WHERE workorder_id = v_workorder_id
+                     AND policy_no = p_policy_no;
+                  --修改工单内容
+                  SELECT content
+                    INTO v_content
+                    FROM mcc_workorder
+                   WHERE workorder_id = v_workorder_id;
+                  IF lengthb(v_content) > 420 THEN
+                     UPDATE mcc_workorder mw
+                        SET mw.content = mw.content || chr(10) || '因保单' || p_policy_no || '网上回访成功' ||
+                                         '，该保单已从该工单任务中删除。'
+                      WHERE workorder_id = v_workorder_id;
+                  END IF;
+                  SELECT MAX(mwtq.task_assignee)
+                    INTO v_task_assignee
+                    FROM mcc_wf_task_queue mwtq
+                   WHERE mwtq.business_key = v_workorder_id
+                     AND mwtq.is_finished = '0';
+                  IF v_task_assignee IS NOT NULL THEN
+                     mcccde.mcc_pub.get_seq('mcc_notice',
+                                            'notice_id',
+                                            'mccdata',
+                                            v_notice_id,
+                                            v_flag,
+                                            v_message);
+                     INSERT INTO mcc_notice
+                        (notice_id,
+                         notice_type,
+                         notice_theme,
+                         notice_level,
+                         notice_create_time,
+                         renter_id,
+                         notice_text,
+                         reply_mark,
+                         whether_remian)
+                     VALUES
+                        (v_notice_id,
+                         '2',
+                         '工单任务更改通知',
+                         '0',
+                         SYSDATE,
+                         'default',
+                         '工单' || v_workorder_id || '因保单' || p_policy_no || '网上回访成功' ||
+                         '，该保单已从该工单任务中删除。',
+                         '0',
+                         '1');
+
+                     --通知任务处理人
+                     INSERT INTO mcc_notice_reader
+                        (notice_id,
+                         reader_id)
+                     VALUES
+                        (v_notice_id,
+                         v_task_assignee);
+
+                  END IF;
+               ELSE
+                  --修改工单状态为7-已撤销
+                  UPDATE mcc_workorder mw
+                     SET mw.workorder_status = '7'
+                   WHERE mw.workorder_id = v_workorder_id;
+                  --查看工作流状态
+                  SELECT MAX(mwtq.task_assignee),
+                         COUNT(1)
+                    INTO v_task_assignee,
+                         v_task_count
+                    FROM mcc_wf_task_queue mwtq
+                   WHERE mwtq.business_key = v_workorder_id
+                     AND mwtq.is_finished = '0';
+                  --存在未完成的工作流任务,则写入终止消息
+                  IF v_task_count <> '0' THEN
+                     --调用工作流接口写入消息
+                     l_wf_mcc_interface.abort_process(p_process_name => 'mcc_main_process',
+                                                      p_business_key => v_workorder_id,
+                                                      p_msg_id       => v_msg_id);
+                     IF v_task_assignee IS NOT NULL THEN
+                        --写入通知记录
+                        mcccde.mcc_pub.get_seq('mcc_notice',
+                                               'notice_id',
+                                               'mccdata',
+                                               v_notice_id,
+                                               v_flag,
+                                               v_message);
+                        INSERT INTO mcc_notice
+                           (notice_id,
+                            notice_type,
+                            notice_theme,
+                            notice_level,
+                            notice_create_time,
+                            renter_id,
+                            notice_text,
+                            reply_mark,
+                            whether_remian)
+                        VALUES
+                           (v_notice_id,
+                            '2',
+                            '工单任务取消通知',
+                            '0',
+                            SYSDATE,
+                            'default',
+                            '工单' || v_workorder_id || '因保单' || p_policy_no || '网上回访成功' ||
+                            '，其工单任务被终止。',
+                            '0',
+                            '1');
+                        --通知任务处理人
+                        INSERT INTO mcc_notice_reader
+                           (notice_id,
+                            reader_id)
+                        VALUES
+                           (v_notice_id,
+                            v_task_assignee);
+                     END IF;
+                     --将未完成的转办任务进行终止
+                     FOR v_workorder_transfer IN c_workorder_transfer(v_workorder_id)
+                     LOOP
+                        --调用工作流接口写入消息
+                        l_wf_mcc_interface.abort_process(p_process_name => 'mcc_sub_process',
+                                                         p_business_key => v_workorder_transfer.business_key,
+                                                         p_msg_id       => v_msg_id);
+                        IF v_workorder_transfer.task_assignee IS NOT NULL THEN
+                           --写入通知记录
+                           mcccde.mcc_pub.get_seq('mcc_notice',
+                                                  'notice_id',
+                                                  'mccdata',
+                                                  v_notice_id,
+                                                  v_flag,
+                                                  v_message);
+                           INSERT INTO mcc_notice
+                              (notice_id,
+                               notice_type,
+                               notice_theme,
+                               notice_level,
+                               notice_create_time,
+                               renter_id,
+                               notice_text,
+                               reply_mark,
+                               whether_remian)
+                           VALUES
+                              (v_notice_id,
+                               '2',
+                               '工单任务取消通知',
+                               '0',
+                               SYSDATE,
+                               'default',
+                               '工单' || v_workorder_id || '因保单' || p_policy_no || '网上回访成功' ||
+                               '，其工单任务被终止。',
+                               '0',
+                               '1');
+                           --通知任务处理人
+                           INSERT INTO mcc_notice_reader
+                              (notice_id,
+                               reader_id)
+                           VALUES
+                              (v_notice_id,
+                               v_workorder_transfer.task_assignee);
+                        END IF;
+                     END LOOP;
+                  END IF;
+               END IF;
+            END IF;
+            p_flag    := '1';
+            p_message := '处理成功！';
+         END IF;
+      END IF;
+
+   EXCEPTION
+      WHEN OTHERS THEN
+         p_flag    := '2';
+         p_message := SQLERRM;
+   END web_callback_by_activity_id;
+   --**************************************************************
+   --功能说明：
+   --    网上在线回访活动判断：判断某一保单是否允许进行某一活动类型的在线回访
+   --    该接口为根据保单号、活动ID判断
+
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --        p_activity_id : 活动ID
+   --        p_branch_code   机构代码
+   --        p_channel_type   渠道;
+   --        p_business_source 保单来源;
+   --        p_product_code    主险代码;
+   --    输出参数：
+   --        返回标志 Y-通过、N-不通过
+   --修改记录：create by ke.xiao@sino-life.com 2016.02
+   --************************************************************
+   FUNCTION web_callback_activity_id_check(p_policy_no       IN VARCHAR2,
+                                           p_activity_id     IN VARCHAR2,
+                                           p_branch_code     IN VARCHAR2,
+                                           p_channel_type    IN VARCHAR2,
+                                           p_business_source IN VARCHAR2,
+                                           p_product_code    IN VARCHAR2) RETURN VARCHAR2 IS
+      v_branch_code     policy.branch_code %TYPE;
+      v_channel_type    policy.channel_type%TYPE;
+      v_business_source policy.business_source%TYPE;
+      v_product_code    policy_product.product_code%TYPE;
+      v_flag            VARCHAR2(1) := 'N';      
+      v_count           NUMBER := '0';
+   BEGIN
+      SELECT MAX(p.branch_code),
+             MAX(pp.product_code),
+             MAX(p.channel_type),
+             MAX(p.business_source)           
+        INTO v_branch_code,
+             v_product_code,
+             v_channel_type,
+             v_business_source          
+        FROM policy         p,
+             policy_product pp,
+             policy_contract pc
+       WHERE p.policy_no = p_policy_no
+         AND p.policy_no = pp.policy_no
+         AND pp.is_primary_plan = 'Y'
+         AND p.policy_no=pc.policy_no
+         AND (p.channel_type not in ('01','03','07') OR (p.channel_type in ('01','03','07') AND pc.client_sign_date is not null)); --个险经代收展渠道要签收回执，其他的不用
+      IF v_branch_code IS NOT NULL THEN
+         SELECT COUNT(1)
+           INTO v_count
+           FROM mcc_web_callback_set_tbl mwcs
+          WHERE mwcs.product_code = v_product_code
+            AND nvl(mwcs.channel_type, v_channel_type) = v_channel_type
+            AND nvl(mwcs.business_source, v_business_source) = v_business_source
+            AND mwcs.branch_code IN
+                (SELECT branch_code
+                   FROM branch_info
+                  START WITH branch_code = v_branch_code
+                 CONNECT BY PRIOR parent_branch = branch_code)
+            AND valid_flag = 'Y'
+            AND mwcs.activity_id = p_activity_id;
+         IF v_count > 0 THEN
+            v_flag := 'Y';
+         ELSE
+            v_flag := 'N';
+         END IF;
+         RETURN v_flag;
+      ELSIF p_product_code IS NOT NULL THEN
+         SELECT COUNT(1)
+           INTO v_count
+           FROM mcc_web_callback_set_tbl mwcs
+          WHERE mwcs.product_code = p_product_code
+            AND nvl(mwcs.channel_type, p_channel_type) = p_channel_type
+            AND nvl(mwcs.business_source, p_business_source) = p_business_source
+            AND mwcs.branch_code IN
+                (SELECT branch_code
+                   FROM branch_info
+                  START WITH branch_code = p_branch_code
+                 CONNECT BY PRIOR parent_branch = branch_code)
+            AND valid_flag = 'Y'
+            AND mwcs.activity_id = p_activity_id;
+         IF v_count > 0 THEN
+            v_flag := 'Y';
+         ELSE
+            v_flag := 'N';
+         END IF;
+         RETURN v_flag;
+      ELSE
+         v_flag := 'N';
+         RETURN v_flag;
+      END IF;
+   END web_callback_activity_id_check;
+
+   --**************************************************************
+   --功能说明：
+   --    网上回访复核调用接口
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --        p_review_result:  复核结果 （Y-通过，N-不通过）
+   --        p_web_unpassed_reason :不通过原因（1-签名不符合，2-照片不符合）
+   --        p_web_review_opinion :复核意见
+   --    输出参数：
+   --        p_flag 返回标志 Y-成功，N-失败
+   --        p_message 返回处理详细信息
+   --        p_workorder_type 返回工单类型
+   --        p_client_no 客户号
+   --       p_policy_no_list 保单号(多个以英文逗号分割)
+   --       p_task_id 回访任务号(与保单号顺序一致，多个以英文逗号分割)
+   --       p_workorder_reason 转办原因代码(多个以英文逗号分割)
+   --        p_workorder_context 工单内容
+   --        p_workorder_period 工单处理时效
+   --        p_user_code 工单转办人
+   --        p_workorder_status 工单状态(1-新建/座席暂存时，2-待处理/座席提交时)
+
+   --修改记录：create by ke.xiao@sino-life.com 2016.09
+   --************************************************************
+
+   PROCEDURE web_callback_policy_review(p_policy_no           IN mcc_callback_task.policy_no%TYPE,
+                                        p_review_result       IN VARCHAR2,
+                                        p_web_unpassed_reason IN mcc_uw_callback_policy.web_unpassed_reason%TYPE,
+                                        p_web_review_opinion  IN mcc_uw_callback_policy.web_review_opinion%TYPE,
+                                        p_flag                OUT VARCHAR2,
+                                        p_message             OUT VARCHAR2,
+                                        p_workorder_type      OUT VARCHAR2,
+                                        p_client_no           OUT VARCHAR2,
+                                        p_policy_no_list      OUT VARCHAR2,
+                                        p_task_id             OUT VARCHAR2,
+                                        p_workorder_reason    OUT VARCHAR2,
+                                        p_workorder_context   OUT VARCHAR2,
+                                        p_workorder_period    OUT NUMBER,
+                                        p_user_code           OUT VARCHAR2,
+                                        p_workorder_status    OUT VARCHAR2) IS
+      CURSOR c_policy IS
+         SELECT mucp.policy_no,
+                mucp.web_review_user,
+                mct.client_no,
+                mct.task_id,
+                mct.business_no
+           FROM mcc_uw_callback_policy mucp,
+                mcc_callback_task      mct
+          WHERE mucp.web_file_id = (SELECT web_file_id
+                                      FROM mcc_uw_callback_policy
+                                     WHERE policy_no = p_policy_no)
+            AND mucp.policy_no = mct.policy_no
+            AND mct.callback_status = '3'
+            AND mct.extract_date > SYSDATE - 10
+            AND mct.activity_id IN ('1000000016', '1000000017', '1000000018');
+      CURSOR c_workorder_detail IS
+         SELECT mqq.question_title,
+                mqa.answers,
+                mqa.workorder_reason,
+                mqpq.sequence
+           FROM mcc_callback_task       mct,
+                mcc_qsbk_survey_result  mqsr,
+                mcc_qsbk_answer         mqa,
+                mcc_qsbk_question       mqq,
+                mcc_qsbk_survey_list    mqsl,
+                mcc_qsbk_paper_question mqpq
+          WHERE mct.policy_no = p_policy_no
+            AND mct.activity_id IN ('1000000016', '1000000017', '1000000018')
+            AND mct.task_id = mqsr.task_id
+            AND mqsr.result_id = mqsl.result_id
+            AND mqsl.results = mqa.answer_order
+            AND mqsl.paper_question_id = mqpq.paper_question_id
+            AND mqpq.question_id = mqq.question_id
+            AND mqq.question_id = mqa.question_id
+            AND mqa.is_expect IS NULL
+          ORDER BY mqpq.sequence;
+      CURSOR c_workorder_reason IS
+         SELECT DISTINCT mqa.workorder_reason
+           FROM mcc_callback_task       mct,
+                mcc_qsbk_survey_result  mqsr,
+                mcc_qsbk_answer         mqa,
+                mcc_qsbk_question       mqq,
+                mcc_qsbk_survey_list    mqsl,
+                mcc_qsbk_paper_question mqpq
+          WHERE mct.policy_no = p_policy_no
+            AND mct.activity_id IN ('1000000016', '1000000017', '1000000018')
+            AND mct.task_id = mqsr.task_id
+            AND mqsr.result_id = mqsl.result_id
+            AND mqsl.results = mqa.answer_order
+            AND mqsl.paper_question_id = mqpq.paper_question_id
+            AND mqpq.question_id = mqq.question_id
+            AND mqq.question_id = mqa.question_id
+            AND mqa.is_expect IS NULL
+            AND mqa.workorder_reason IS NOT NULL;
+      v_count   NUMBER;
+      v_task_id mcc_callback_task.task_id%TYPE;
+
+   BEGIN
+      p_flag := 'N';
+      IF p_review_result = 'Y' THEN
+         p_workorder_context := '客户通过在线回访，如下问题答案选择“否”。';
+         FOR v_workorder_detail IN c_workorder_detail
+         LOOP
+            p_workorder_context := p_workorder_context || chr(10) || '问题：' ||
+                                   v_workorder_detail.sequence || '.' ||
+                                   v_workorder_detail.question_title;
+         END LOOP;
+         IF lengthb(p_workorder_context) > 500 THEN
+            p_workorder_context := substr(p_workorder_context, 1, 240) || '...详见线上回访结果影像。';
+         END IF;
+         FOR v_workorder_reason IN c_workorder_reason
+         LOOP
+            p_workorder_reason := p_workorder_reason || v_workorder_reason.workorder_reason || ',';
+         END LOOP;
+         IF p_workorder_reason IS NULL THEN
+            p_workorder_context := '';
+            FOR v_policy IN c_policy
+            LOOP
+               UPDATE mcc_uw_callback_policy mucp
+                  SET mucp.uw_result       = '7',
+                      mucp.web_review_date = SYSDATE
+                WHERE mucp.policy_no = v_policy.policy_no;
+            END LOOP;
+         ELSE
+            p_workorder_status := '2';
+            p_workorder_type   := '210001';
+            p_workorder_period := '7';
+            FOR v_policy IN c_policy
+            LOOP
+               UPDATE mcc_uw_callback_policy mucp
+                  SET mucp.uw_result        = '2',
+                      mucp.web_review_date  = SYSDATE,
+                      mucp.task_finish_date = '',
+                      mucp.real_finish_date = ''
+                WHERE mucp.policy_no = v_policy.policy_no;
+               p_policy_no_list := p_policy_no_list || v_policy.policy_no || ',';
+               p_task_id        := v_policy.task_id;
+               p_client_no      := v_policy.client_no;
+               p_user_code      := v_policy.web_review_user;
+            END LOOP;
+         END IF;
+      ELSE
+
+         FOR v_policy IN c_policy
+         LOOP
+            UPDATE mcc_uw_callback_policy mucp
+               SET mucp.uw_result           = '10',
+                   mucp.web_review_date     = SYSDATE,
+                   mucp.task_finish_date    = '',
+                   mucp.real_finish_date    = '',
+                   mucp.web_unpassed_reason = p_web_unpassed_reason,
+                   mucp.web_review_opinion  = p_web_review_opinion
+             WHERE mucp.policy_no = v_policy.policy_no;
+
+            UPDATE mcc_callback_task mct
+               SET mct.callback_status = '0'
+             WHERE mct.policy_no = v_policy.policy_no
+               AND mct.callback_status = '3'
+               AND mct.deal_user IS NULL
+               AND mct.finish_date IS NULL
+               AND mct.activity_id IN ('1000000001', '1000000002');
+            UPDATE mcc_callback_task mct
+               SET mct.callback_status = '1'
+             WHERE mct.policy_no = v_policy.policy_no
+               AND mct.callback_status = '3'
+               AND mct.deal_user IS NOT NULL
+               AND mct.finish_date IS NULL
+               AND mct.activity_id IN ('1000000001', '1000000002');
+            SELECT COUNT(1)
+              INTO v_count
+              FROM mcc_callback_task mct
+             WHERE mct.policy_no = v_policy.policy_no
+               AND mct.callback_status <> '3'
+               AND mct.activity_id IN ('1000000001', '1000000002');
+
+            IF v_count = '0' THEN
+               mcc_pub.get_seq('mcc_callback_task',
+                               'task_id',
+                               'mccdata',
+                               v_task_id,
+                               p_flag,
+                               p_message);
+
+               INSERT INTO mcc_callback_task
+                  (task_id,
+                   activity_id,
+                   tenant_code,
+                   extract_date,
+                   policy_no,
+                   business_no,
+                   client_no,
+                   task_type,
+                   callback_status)
+               VALUES
+                  (v_task_id,
+                   '1000000001',
+                   'default',
+                   SYSDATE,
+                   v_policy.policy_no,
+                   v_policy.business_no,
+                   v_policy.client_no,
+                   '1',
+                   '0');
+            END IF;
+         END LOOP;
+      END IF;
+      p_flag    := 'Y';
+      p_message := '处理成功！';
+   END web_callback_policy_review;
+
+   --**************************************************************
+   --功能说明：
+   --    网上在线回访活动归类,根据业务不同的要求，确定网上在线回访保单导入回访时效
+   --    该接口为根据保单号判断
+   --    根据业务需求：
+   --                        DMP-16659 MCC系统在线回访抽单规则设置优化
+   --参数说明：
+   --    输入参数
+   --        p_policy_no ：保单号
+   --    输出参数：
+   --        返回标志 线上回访保单导入回访时效
+   --修改记录：create by ke.xiao@sino-life.com 2016.02
+   --************************************************************
+   FUNCTION get_policy_web_callback_period(p_policy_no IN VARCHAR2) RETURN NUMBER IS
+      v_branch_code         policy.branch_code %TYPE;
+      v_channel_type        policy.channel_type%TYPE;
+      v_business_source     policy.business_source%TYPE;
+      v_product_code        policy_product.product_code%TYPE;
+      v_web_callback_period mcc_web_callback_set_tbl.web_callback_period%TYPE;
+      v_count1              NUMBER;
+
+   BEGIN
+      SELECT MAX(p.branch_code),
+             MAX(pp.product_code),
+             MAX(p.channel_type),
+             MAX(p.business_source)
+        INTO v_branch_code,
+             v_product_code,
+             v_channel_type,
+             v_business_source
+        FROM policy         p,
+             policy_product pp
+       WHERE p.policy_no = p_policy_no
+         AND p.policy_no = pp.policy_no
+         AND pp.is_primary_plan = 'Y';
+      SELECT COUNT(mwcs.activity_id),
+             MIN(mwcs.web_callback_period)
+        INTO v_count1,
+             v_web_callback_period
+        FROM mcc_web_callback_set_tbl mwcs
+       WHERE mwcs.product_code = v_product_code
+         AND nvl(mwcs.channel_type, v_channel_type) = v_channel_type
+         AND nvl(mwcs.business_source, v_business_source) = v_business_source
+         AND mwcs.branch_code IN (SELECT branch_code
+                                    FROM branch_info
+                                   START WITH branch_code = v_branch_code
+                                  CONNECT BY PRIOR parent_branch = branch_code)
+         AND valid_flag = 'Y';
+      IF v_count1 > 0 THEN
+         v_web_callback_period := nvl(v_web_callback_period, 3);
+      ELSE
+         v_web_callback_period := 0;
+      END IF;
+      RETURN v_web_callback_period;
+   END get_policy_web_callback_period;
+END mcc_callback_batch;
+/
