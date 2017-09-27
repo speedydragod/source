@@ -1,0 +1,341 @@
+select 
+tti.app_no,tti.insure_no,
+to_char(tti.list_created_date, 'yyyy-MM-dd') list_created_date,
+             tti.list_type,
+             (select tlt.list_type_name
+                from i_ltsrule.tsn_list_type tlt
+               where tti.list_type = tlt.list_type) list_type_name,
+             (select ctt.description
+                from i_lifebase.channel_type_tbl ctt
+               where ctt.channel_type = tti.channel_type) channel_type_desc,
+             tti.branch_code,
+             (select bi.branch_full_name
+                from i_lifebase.branch_info bi
+               where bi.branch_code = tti.branch_code) branch_name,
+             (select branch_name
+                from (select a.branch_name, a.branch_code
+                        from i_lifebase.branch_info a
+                       where a.branch_level = '03'
+                          or a.branch_code in
+                             (select b.parent_branch
+                                from i_lifebase.branch_info b
+                               where b.branch_level = '04')
+                       order by a.branch_name desc)
+               where branch_code = tti.branch_code
+                 and rownum = 1) support_company,
+             (select a.branch_name
+                from i_lifebase.branch_info a
+               where a.branch_code = tti.branch_code
+                 and a.branch_level = '04') service_dept,
+             tti.department_no,
+             (select bi.dept_name
+                from i_lifebase.department_info bi
+               where bi.dept_no = tti.department_no
+                 and bi.channel_type = '06'
+                 and bi.dept_level = '04') department_name,
+             (select di.dept_full_name
+                from i_lifebase.department_info di, i_pubdata.staff_info si
+               where di.dept_no = si.dept_no
+                 and si.emp_no = tti.agent_no) agent_dept_name,
+             tti.agent_no,
+             (select case
+                       when sp.phone_type = '1' and length(sp.phone_no) < 11 then
+                        sp.area_no || sp.phone_no
+                       when sp.phone_type = '1' and length(sp.phone_no) >= 11 then
+                        sp.phone_no
+                       when sp.phone_type = '3' then
+                        sp.phone_no
+                       when sp.phone_type = '2' and
+                            substr(to_char(sp.phone_no), 1, 1) <> '1' and
+                            length(sp.phone_no) < 11 then
+                        sp.phone_no
+                       else
+                        ''
+                     end phone
+                from c_ptydata.staff_phone sp
+               where not exists
+               (select 1
+                        from c_ptydata.staff_phone sp1
+                       where trunc(sp1.updated_date) > trunc(sp.updated_date)
+                         and sp1.emp_no = tti.agent_no
+                         and sp1.phone_status = 'Y')
+                 and sp.emp_no = tti.agent_no
+                 and sp.phone_status = 'Y') agent_phone,
+             (select case
+                       when sp.phone_type = '4' then
+                        sp.phone_no
+                       when sp.phone_type = '2' and
+                            substr(to_char(sp.phone_no), 1, 1) = '1' and
+                            length(sp.phone_no) = 11 then
+                        sp.phone_no
+                       else
+                        ''
+                     end mobile
+                from c_ptydata.staff_phone sp
+               where not exists
+               (select 1
+                        from c_ptydata.staff_phone sp1
+                       where trunc(sp1.updated_date) > trunc(sp.updated_date)
+                         and sp1.emp_no = tti.agent_no
+                         and sp1.phone_status = 'Y')
+                 and sp.emp_no = tti.agent_no
+                 and sp.phone_status = 'Y') agent_mobile,
+             tti.policy_no,
+             tti.apply_no,
+             tti.name,
+             (select s.sex_desc
+                from i_lifebase.sex s
+               where s.sex_code = tti.sex_code) apply_sex_desc,
+             (select it.id_type_name
+                from i_lifebase.id_type it
+               where it.id_type = tti.id_type) apply_id_type,
+             tti.idno apply_id_no,
+             to_char(tti.birthday, 'yyyy-MM-dd') apply_birthday,
+             (select substrb(ca.full_address, 0, 200)
+                from i_pubdata.client_address ca
+               where ca.client_no = tti.applicant_no
+                 and ca.address_type = '1'
+                 and ca.address_status = '1'
+                 and rownum = 1) v_apply_home_addr,
+             (select cp.phone_no
+                from i_pubdata.client_phone cp
+               where cp.client_no = tti.applicant_no
+                 and cp.phone_type = '4'
+                 and cp.phone_status = '1'
+                 and rownum = 1) v_apply_mobile,
+             (select cp.phone_no
+                from i_pubdata.client_phone cp
+               where cp.client_no = tti.applicant_no
+                 and cp.phone_type = '1'
+                 and cp.phone_status = '1'
+                 and rownum = 1) v_apply_home_phone,
+             tti.v_insured_name,
+             tti.v_insured_sex_desc,
+             to_char(tti.v_insured_birthday, 'yyyy-MM-dd') v_insured_birthday,
+             tti.v_insured_id_type,
+             tti.v_insured_id_no,
+             tti.should_pay_times,
+             tti.pay_times,
+             tti.pay_years,
+             tti.ins_years,
+             to_char(tti.pay_date, 'yyyy-MM-dd') pay_date,
+             to_char(tti.effect_date, 'yyyy-MM-dd') effect_date,
+             decode(tti.frequency, '2', '月', '5', '年') frequency,
+             (select cm.description
+                from c_contrule.charging_method cm
+               where cm.charging_method = tti.charging_method) charging_method,
+             (select ba.description
+                from i_lifebase.bank_info ba
+               where ba.bank_code = tti.bank_code) bank_name,
+             tti.bank_account,
+             (select transfer_desc
+                from (select rp.transfer_desc, rp.policy_no
+                        from i_rendata.rn_prem_due rp
+                       where rp.prem_due_pk =
+                             (select max(pd.prem_due_pk)
+                                from i_rendata.rn_prem_due pd
+                               where rp.policy_no = pd.policy_no
+                                 and pd.transfer_no is not null
+                                 and pd.charging_method = '2'
+                                 and pd.channel_type = '06'
+                                 and pd.transfer_result <> 'S0000')) s3
+               where s3.policy_no = tti.policy_no) last_trans_fail_reason,
+             (select original_bank_info
+                from (select rp.original_bank_info, rp.policy_no
+                        from i_rendata.rn_prem_due rp
+                       where rp.prem_due_pk =
+                             (select max(pd.prem_due_pk)
+                                from i_rendata.rn_prem_due pd
+                               where rp.policy_no = pd.policy_no
+                                 and pd.transfer_no is not null
+                                 and pd.charging_method = '2'
+                                 and pd.channel_type = '06'
+                                 and pd.transfer_result <> 'S0000')) s3
+               where s3.policy_no = tti.policy_no) last_trans_fail_reason_bank,
+             tti.v_full_name,
+             tti.v_base_sum_ins,
+             (select sum(b.period_prem_sum)
+                from i_pubdata.policy_product_prem b
+               where b.prod_seq = 1
+                 and b.policy_no = tti.policy_no) v_primary_sum,
+             (select full_name
+                from (select d.full_name, c.policy_no
+                        from i_pubdata.policy_product c, i_pdmsdata.product d
+                       where c.is_primary_plan = 'N'
+                         and c.product_code = d.product_code
+                       order by c.prod_seq) s1
+               where s1.policy_no = tti.policy_no) prod_add_name_str,
+             (select product_code
+                from (select d.product_code, c.policy_no
+                        from i_pubdata.policy_product c, i_pdmsdata.product d
+                       where c.is_primary_plan = 'N'
+                         and c.product_code = d.product_code
+                       order by c.prod_seq) s2
+               where s2.policy_no = tti.policy_no) prod_add_code_str,
+             (tti.modal_total_prem -
+             (select sum(b.period_prem_sum)
+                 from i_pubdata.policy_product_prem b
+                where b.prod_seq = 1
+                  and b.policy_no = tti.policy_no)) risk_premium,
+             tti.balance_lp_perm,
+             tti.prem_due,
+             to_char(tti.prem_actural_date, 'yyyy-MM-dd') prem_actural_date,
+             (select b.postalcode
+                from i_pubdata.policy_contact_info a, i_pubdata.client_address b
+               where a.address_seq = b.address_seq
+                 and a.policy_no = tti.policy_no
+                 and b.address_status = '1') v_postalcode,
+             (select b.full_address
+                from i_pubdata.policy_contact_info a, i_pubdata.client_address b
+               where a.address_seq = b.address_seq
+                 and a.policy_no = tti.policy_no
+                 and b.address_status = '1') v_contact_address,
+             (select case
+                       when b.area_no is not null then
+                        b.area_no || b.phone_no
+                       else
+                        b.phone_no
+                     end contact_phone
+                from i_pubdata.policy_contact_info a, i_pubdata.client_phone b
+               where a.phone_seq = b.phone_seq
+                 and a.policy_no = tti.policy_no
+                 and b.phone_status = '1') contact_phone,
+             tti.agent_no salesman_no,
+             (select si.emp_name
+                from i_pubdata.staff_info si
+               where si.emp_no = tti.agent_no) salesman_name,
+             tti.is_work_policy,
+             tti.long_short_type,
+             tti.policy_state,
+             to_char(tti.created_date, 'yyyy-MM-dd') created_date,
+             tti.sn_agent_code,
+             tti.sn_agent_name,
+             tti.issue_date,
+             (select max(tci.start_time)
+                from i_ltsdata.tsn_call_info tci
+               where tci.task_no = tti.task_no) last_call_time,
+             tti.call_time,
+             (select call_result_name
+                from i_ltsrule.tsn_call_result_type tcr
+               where tcr.call_result = tti.call_result) call_result_name,
+             (select trr.return_result_name
+                from i_ltsrule.tsn_return_result trr
+               where trr.return_result = tti.return_result) return_result_name,
+             (select ui.user_name
+                from i_ltsdata.user_info ui
+               where ui.user_code = tti.work_person) work_person,
+             case
+               when tti.is_end = 'Y' then
+                case
+                  when to_number(to_char(tti.updated_date, 'hh24')) >= 2 and
+                       to_number(to_char(tti.updated_date, 'hh24')) <= 4 then
+                   '系统结案'
+                  else
+                   '结案'
+                end
+               when tti.is_end = 'N' then
+                case
+                  when tti.call_time is not null then
+                   '已处理'
+                  else
+                   '待处理'
+                end
+             end work_state_name,
+             decode(tti.is_end,
+                    'Y',
+                    to_char(tti.updated_date, 'yyyy-MM-dd'),
+                    null) case_close_date,
+             case
+               when to_number(tti.pay_times) >= to_number(tti.should_pay_times) or
+                    tti.should_pay_times is null then
+                '已缴费'
+               when to_number(tti.pay_times) < to_number(tti.should_pay_times) or
+                    tti.pay_times is null then
+                '未交费'
+             end pay_situation,
+             tti.remark,
+             to_char(tti.sn_agent_date, 'yyyy-MM-dd hh24:mi:ss') sn_agent_date
+        from (select tt.list_created_date,
+                     tbi.list_type,
+                     tt.branch_code,
+                     tt.department_no,
+                     tt.policy_no,
+                     tt.apply_no,
+                     tt.name,
+                     tt.should_pay_times,
+                     tt.pay_times,
+                     tt.pay_years,
+                     tt.ins_years,
+                     tt.pay_date,
+                     tt.effect_date,
+                     tt.frequency,
+                     tt.charging_method,
+                     tt.prem_actural_date,
+                     tt.is_work_policy,
+                     tt.long_short_type,
+                     tt.policy_state,
+                     tt.created_date,
+                     tt.sn_agent_code,
+                     tt.sn_agent_name,
+                     tt.issue_date,
+                     tt.task_no,
+                     tt.call_time,
+                     tt.call_result,
+                     tt.return_result,
+                     tt.work_person,
+                     tt.is_end,
+                     tt.updated_date,
+                     tt.remark,
+                     tt.sn_agent_date,
+                     t.channel_type,
+                     t.agent_no,
+                     t.bank_code,
+                     t.bank_account,
+                     t.prem_due_date,
+                     t.modal_total_prem,
+                     t.balance_lp_perm,
+                     t.prem_due,
+                     ci.client_no app_no,
+                     ci.sex_code,
+                     ci.id_type,
+                     ci.idno,
+                     ci.birthday,
+                     pb.applicant_no,
+                     (select d.full_name
+                        from i_pdmsdata.product d
+                       where d.product_code = pp.product_code) v_full_name,
+                     pp.base_sum_ins v_base_sum_ins,
+                     pp.coverage_period v_coverage_period,
+                     pci.client_no insure_no,
+                     pci.client_name v_insured_name,
+                     (select s.sex_desc
+                        from i_lifebase.sex s
+                       where s.sex_code = pci.sex_code) v_insured_sex_desc,
+                     pci.birthday v_insured_birthday,
+                     (select it.id_type_name
+                        from i_lifebase.id_type it
+                       where it.id_type = pci.id_type) v_insured_id_type,
+                     pci.idno v_insured_id_no,
+                     row_number() over(partition by t.policy_no, tt.task_no ORDER by t.prem_due_date desc) rn
+                from i_ltsdata.tsn_task_info      tt,
+                     i_ltsdata.tsn_batch_info     tbi,
+                     i_rendata.rn_prem_due        t,
+                     i_pubdata.policy_prem_info   ppi,
+                     i_pubdata.policy             pb,
+                     i_pubdata.client_information ci,
+                     i_pubdata.client_information pci,
+                     i_pubdata.policy_product     pp
+               where ppi.policy_no = t.policy_no
+                 and ppi.prem_due_date = t.prem_due_date
+                 and t.channel_type = '06'
+                 and tt.batch_no = tbi.batch_no
+                 and tbi.list_type in ('01', '02', '03')
+                 and tt.policy_no = t.policy_no
+                 and tt.policy_no = ppi.policy_no
+                 and tt.policy_no = pb.policy_no
+                 and pb.policy_no = t.policy_no
+                 and pb.applicant_no = ci.client_no
+                 and tt.policy_no = pp.policy_no
+                 and pp.policy_no = t.policy_no
+                 and pci.client_no = pp.insured_no
+                 and pp.prod_seq = 1 and pb.effect_date=to_date('2016-07-20','yyyy-mm-dd')  )tti
