@@ -1,0 +1,484 @@
+package com.sinolife.commons.excel;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+
+import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
+
+import com.sinolife.commons.exception.AppException;
+import com.sinolife.commons.DateUtil;
+
+/**
+ * @category 对于大数据量excel2007支持不佳，由于采用usermodel，全量读入后产生的oom易发生堆溢出
+ * */
+public class ExcelReader {
+
+	/**
+	 * @category 关闭excel文件输入流，释放文件句柄
+	 * */
+	public void close(){
+		if(excelSource!=null){
+			try {
+				excelSource.close();
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+	}
+	
+	/**
+	 * @category 返回excel文件内的所有sheet名
+
+	 * @return List<String>
+	 * */
+	public List<String> getAllSheetName(){
+		if(workbook==null){
+			throw new AppException("没有workbook对象！");
+		}
+		List<String> list = new ArrayList<String>();
+		for(int i=0;i<workbook.getNumberOfSheets();i++){
+			list.add(workbook.getSheetName(i));//访问下标从0开始编号
+
+		}
+		return list;
+	}
+	
+	/**
+	 * @category 返回指定下标的sheet名称
+	 * @param int 要获取名字的sheet的下标
+
+	 * @return String sheet的名字
+
+	 * */
+	public String getSheetName(int sheetNo){
+		if(workbook==null){
+			throw new AppException("没有workbook对象！");
+		}
+		return workbook.getSheetName(sheetNo);
+	}
+	
+	/**
+	 * @category 返回excel文件内的sheet数量
+	 * */
+	public int getNumberOfSheets(){
+		if(workbook==null){
+			throw new AppException("没有workbook对象！");
+		}
+		return workbook.getNumberOfSheets();
+	}
+	
+	/**
+	 * @category 读取excel中的一行Physical cell数据
+	 * @param int 行号
+	 * @return List<String> 该行Physical cell数据
+	 * */
+	public List<String> readPhysicalLine(int lineNo){
+		if(sheet==null){
+			throw new AppException("请先设置需要访问的sheet的编号!");
+		}
+		int firstRowNum = sheet.getFirstRowNum();
+		if(lineNo<firstRowNum){
+			throw new AppException("要访问的行号不能小于"+firstRowNum+"!");
+		}
+		int maxRow = sheet.getLastRowNum();
+		if(lineNo>maxRow){
+			throw new AppException("该excel文件中至多只有"+(maxRow+1)+"行！行编号从0开始！");
+		}
+		
+		Row row = sheet.getRow(lineNo);
+		List<String> list = new ArrayList<String>();
+		if(row!=null){
+			Iterator<Cell> cells = row.cellIterator();
+			while (cells!=null&&cells.hasNext()) {   
+				list.add(getCellString(cells.next()));  
+	        }
+		}
+		
+		return list;
+	}
+	
+	/**
+	 * @category 读取excel中的一行数据，从0列开始，直到columnLength-1确定的最后一个cell
+	 * @param int 行号
+	 * @param int 列宽
+	 * @return List<String> 该行数据，包含空cell转换之后的0长度字符串
+
+	 * */
+	public List<String> readLine(int lineNo,int columnLength){
+		if(sheet==null){
+			throw new AppException("请先设置需要访问的sheet的编号!");
+		}
+		int firstRowNum = sheet.getFirstRowNum();
+		if(lineNo<firstRowNum){
+			throw new AppException("要访问的行号不能小于"+firstRowNum+"!");
+		}
+		int maxRow = sheet.getLastRowNum();
+		if(lineNo>maxRow){
+			throw new AppException("该excel文件中至多只有"+(maxRow+1)+"行！行编号从0开始！");
+		}
+		
+		Row row = sheet.getRow(lineNo);
+		List<String> list = new ArrayList<String>();
+		for(int j=0;j<columnLength;j++){
+			Cell cell = row.getCell(j);
+			if(cell==null){
+				list.add("\"\"");
+			}else{
+				list.add(getCellString(row.getCell(j)));
+			}
+		}
+		return list;
+	}
+	
+	/**
+	 * @category 读取指定Row，指定列数的数据
+	 * @param Row 要读取的row
+	 * @param int 列宽
+	 * @return List<String> 该行数据，包含空cell转换之后的0长度字符串
+
+	 * */
+	public List<String> readLine(Row row, int columnLength){
+		if(row==null){
+			throw new AppException("待读取的row为null!");
+		}
+		if(columnLength<=0){
+			throw new AppException("要去读的列数必须大于0!");
+		}
+		List<String> list = new ArrayList<String>();
+		for(int j=0;j<columnLength;j++){
+			Cell cell = row.getCell(j);
+			if(cell==null){
+				list.add("\"\"");
+			}else{
+				list.add(getCellString(row.getCell(j)));
+			}
+		}
+		return list;
+	}
+	
+	/**
+	 * @category 读取整个xls文件
+	 * @param int 要读取的列宽
+	 * */
+	public List<List<String>> readsheets(int columnLength){
+		int sheetCount = getNumberOfSheets();
+		List<List<String>> list = new ArrayList<List<String>>();
+		for(int i=0; i<sheetCount; i++){
+			setSheet(i);
+			List<List<String>> inner = readsheet(i,columnLength);
+			if(i>0){
+				if(inner.size()>0){
+					inner.remove(0);
+				}
+			}
+			if(inner.size()>0){
+				list.addAll(inner);
+			}
+		}
+		return list;
+	}
+	
+	/**
+	 * @category 读取xls文件某个sheet的前rowLimit行
+
+	 * @param int sheet编号
+	 * @param int 行数
+	 * @param int 要读取的列宽
+	 * */
+	public List<List<String>> readsheetLimit(int rowLimit, int columnLength){
+		if(sheet==null){
+			throw new AppException("请先设置需要访问的sheet的编号!");
+		}
+		List<List<String>> list = new ArrayList<List<String>>();
+		Iterator<Row> rows = sheet.rowIterator();
+		Row row = null;
+		int rowcount=0;
+		while(rows.hasNext() && rowcount<rowLimit){
+			rowcount++;
+			row = rows.next();
+			List<String> innerList = new ArrayList<String>();
+			for(int i=0;i<columnLength;i++){
+				innerList.add(getCellString(row.getCell(i)));
+			}
+			list.add(innerList);
+		}
+		return list;
+	}
+	
+	/**
+	 * @category 读取excel文件中指定sheet的整个内容
+
+	 * @param int sheet编号
+	 * @return List<List<String>> 数据内容
+	 * */
+	public List<List<String>> readsheet(int sheetno,int columnLength){
+		setSheet(sheetno);
+		return _readsheet(columnLength);
+	}
+	
+	/**
+	 * @category 读取excel文件中指定sheet的整个内容
+
+	 * @param String sheet名称
+	 * @return List<List<String>> 数据内容
+	 * */
+	public List<List<String>> readsheet(String sheetName,int columnLength){
+		setSheet(sheetName);
+		return _readsheet(columnLength);
+	}
+	
+	/**
+	 * @category 读取excel文件中指定sheet的有数据的行的内容
+
+	 * @param int sheet编号
+	 * @return List<List<String>> 数据内容
+	 * */
+	public List<List<String>> readPhysicalSheet(int sheetno){
+		setSheet(sheetno);
+		return _readPhysicalSheet();
+	}
+	
+	/**
+	 * @category 读取excel文件中指定sheet的整个内容
+
+	 * @param String sheet名称
+	 * @return List<List<String>> 数据内容
+	 * */
+	public List<List<String>> readPhysicalSheet(String sheetName){
+		setSheet(sheetName);
+		return _readPhysicalSheet();
+	}
+	
+	/**
+	 * @category 读取sheet的整个内容,全空的列对应的行不读取
+
+	 * @param int 每行读取的列数，从0列开始
+
+	 * @return List<List<String>> sheet中非空行的内容
+
+	 * */
+	private List<List<String>> _readsheet(int columnLength){
+		if(sheet==null){
+			throw new AppException("请先设置需要访问的sheet的编号!");
+		}
+		List<List<String>> list = new ArrayList<List<String>>();
+		Iterator<Row> rows = sheet.rowIterator();
+		Row row = null;
+		while(rows.hasNext()){
+			row = rows.next();
+			List<String> innerList = new ArrayList<String>();
+			for(int i=0;i<columnLength;i++){
+				innerList.add(getCellString(row.getCell(i)));
+			}
+			list.add(innerList);
+		}
+		return list;
+	}
+	
+	/**
+	 * @category 读取excel中的所有Physical数据(只输出defined cells，没有定义的cell不输出)
+	 * @return List<List<String>> sheet中实际包含的内容
+	 * */
+	private List<List<String>> _readPhysicalSheet(){
+		if(sheet==null){
+			throw new AppException("请先设置需要访问的sheet的编号!");
+		}
+		List<List<String>> list = new ArrayList<List<String>>();
+		Iterator<Row> rows = sheet.rowIterator();
+		Row row = null;
+		while(rows.hasNext()){
+			row = rows.next();
+			List<String> innerList = new ArrayList<String>();
+			Iterator<Cell> cells = row.cellIterator();
+			while (cells.hasNext()) {   
+				innerList.add(getCellString(cells.next()));  
+            }
+			list.add(innerList);
+		}
+		return list;
+	}
+	
+	/**
+	 * @category 读取单元格内容，返回文本格式数据
+	 * @param Cell 待读取的单元格
+
+	 * @return String 单元格文本格式value
+	 * */
+	public static String getCellString(Cell cell){
+		if(cell==null){
+			return "\"\"";
+		}else{
+			String value = null;
+			switch (cell.getCellType()){
+				case Cell.CELL_TYPE_STRING:{
+					value = '"'+cell.getStringCellValue()+'"';
+				}
+				break;
+				case Cell.CELL_TYPE_NUMERIC:
+				case Cell.CELL_TYPE_FORMULA:{
+					if(org.apache.poi.ss.usermodel.DateUtil.isCellDateFormatted(cell)) {
+						//当前的cell是Date
+						value = DateUtil.getFormatDate(cell.getDateCellValue());
+					}else{// 如果是数字
+
+						double num = new Double(cell.getNumericCellValue());
+						value = String.valueOf(myformat.format(num));
+					}
+				}
+				break;
+				case Cell.CELL_TYPE_ERROR:{
+					value = String.valueOf(cell.getErrorCellValue());
+				}
+				break;
+				case Cell.CELL_TYPE_BLANK:{
+					value = "\"\"";
+				}
+				break;
+				case Cell.CELL_TYPE_BOOLEAN:{
+					value = String.valueOf(cell.getBooleanCellValue());
+				}
+				default:{
+					value = cell.toString();
+				}
+				break;
+			}
+			return value;
+		}
+	}
+	
+	public ExcelReader(InputStream is) throws InvalidFormatException, IOException{
+		excelSource = is;
+		workbook = WorkbookFactory.create(excelSource);
+	}
+	
+	/**
+	 * @category 指定要处理的sheet编号
+	 * @param int sheet编号
+	 * */
+	public void setSheet(int sheetno){
+		if(workbook==null){
+			throw new AppException("没有workbook对象！");
+		}
+		sheet = workbook.getSheetAt(sheetno);
+		if(sheet==null){
+			throw new AppException("没有编号为"+sheetno+"的sheet！");
+		}
+	}
+	
+	/**
+	 * @category 指定要处理的sheet名字
+	 * @param int sheet编号
+	 * */
+	public void setSheet(String sheetname){
+		if(workbook==null){
+			throw new AppException("没有workbook对象！");
+		}
+		sheet = workbook.getSheet(sheetname);
+		if(sheet==null){
+			throw new AppException("没有名称为"+sheetname+"的sheet！");
+		}
+	}
+	
+	/**
+	 * @category 返回现在处理的sheet对象
+	 * @return org.apache.poi.ss.usermodel.Sheet
+	 * */
+	public Sheet getSheet(){
+		if(sheet==null){
+			throw new AppException("未指定sheet！");
+		}
+		return sheet;
+	}
+	
+	/**
+	 * @category 获取sheet中的开始行号
+
+	 * @return 开始行号
+
+	 * */
+	public int getFirstRowNum(){
+		if(sheet==null){
+			throw new AppException("未指定sheet，无法取得sheet内开始行数！");
+		}
+		return sheet.getFirstRowNum();//行编号从0开始计数
+
+	}
+	
+	/**
+	 * @category 返回当前sheet中所有的行数
+	 * @return int 到最后一行所在行所有的行数，包含空行
+
+	 * */
+	public int getRowSize(){
+		if(sheet==null){
+			throw new AppException("未指定sheet，无法取得sheet内总行数！");
+		}
+		int rowindex = sheet.getLastRowNum();
+		return rowindex==0?0:rowindex+1;	//行编号从0开始
+
+	}
+	
+	/**
+	 * @category 返回当前sheet的Physical行数
+	 * @return int 实际有值的行数
+	 * */
+	public int getPhysicalRowSize(){
+		if(sheet==null){
+			throw new AppException("未指定sheet，无法取得sheet内总行数！");
+		}
+		return sheet.getPhysicalNumberOfRows();
+	}
+	
+	/**
+	 * @category 返回特定行的所有列数
+
+	 * @param int 特定行的编号
+	 * @return int 所有列数，包含空的列单元格
+	 * */
+	public int getColumnSize(int rowno){
+		if(sheet==null){
+			throw new AppException("未指定sheet，无法取得指定行的列数！");
+		}
+		if(rowno<0){
+			throw new AppException("参数指定的行数不能小于0！");
+		}
+		if(getRowSize()<=rowno){
+			throw new AppException("参数指定的行数大于sheet内的最大行数，无法取得指定行的列数！");
+		}
+		return sheet.getRow(rowno).getLastCellNum();
+	}
+	
+	/**
+	 * @category 返回特定行的Physical列数
+	 * @param int 特定行的编号
+	 * @return int 实际有值的列数
+	 * */
+	public int getPhysicalColumnSize(int rowno){
+		if(sheet==null){
+			throw new AppException("未指定sheet，无法取得指定行的列数！");
+		}
+		if(rowno<0){
+			throw new AppException("参数指定的行数不能小于0！");
+		}
+		if(getRowSize()<=rowno){
+			throw new AppException("参数指定的行数大于sheet内的最大行数，无法取得指定行的列数！");
+		}
+		return sheet.getRow(rowno).getPhysicalNumberOfCells();
+	}
+	
+	private InputStream excelSource = null;
+	private Workbook workbook = null;
+	private Sheet sheet = null;
+	
+	
+	private static java.text.DecimalFormat myformat = new java.text.DecimalFormat("#0"); 
+}
